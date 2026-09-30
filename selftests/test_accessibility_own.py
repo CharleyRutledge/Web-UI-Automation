@@ -151,3 +151,31 @@ def test_status_is_not_only_colour_or_symbols(browser: Browser, runs) -> None:
     spoken = page.locator(".sr-only").all_inner_texts()
     spoken = [t.strip() for t in spoken]
     assert "Failed:" in spoken and "Passed:" in spoken and "Error:" in spoken
+
+
+def test_copy_button_copies_the_exact_fix(browser: Browser, runs) -> None:
+    context = browser.new_context(permissions=["clipboard-read", "clipboard-write"])
+    page = context.new_page()
+    page.goto((runs["failing"].run_dir / "summary.html").as_uri())
+    buttons = page.locator("button.copy")
+    assert buttons.count() >= 6 and buttons.first.is_visible()
+    assert not page.get_by_text("Press and hold a code box").is_visible(), "the no-JS hint hides when buttons work"
+    for i in (0, buttons.count() - 1):
+        button = buttons.nth(i)
+        code = page.locator(f"#{button.get_attribute('data-copy')}").text_content()
+        button.click()
+        assert page.evaluate("navigator.clipboard.readText()") == code
+        assert page.locator("#copy-status").text_content() == "Fix copied to the clipboard"
+        assert button.inner_text().startswith("Copied")
+    context.close()
+
+
+def test_without_javascript_the_fix_can_still_be_selected(browser: Browser, runs) -> None:
+    """Some phone viewers show attachments with scripts off: then no dead buttons, and a hint instead."""
+    context = browser.new_context(java_script_enabled=False)
+    page = context.new_page()
+    page.goto((runs["failing"].run_dir / "summary.html").as_uri())
+    assert page.locator("button.copy").count() >= 6 and not page.locator("button.copy").first.is_visible()
+    assert page.get_by_text("Press and hold a code box").is_visible()
+    assert page.locator("pre.code").first.evaluate("e => getComputedStyle(e).userSelect") == "all"
+    context.close()

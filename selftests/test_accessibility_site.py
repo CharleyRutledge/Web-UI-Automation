@@ -51,6 +51,26 @@ def test_report_has_accessibility_section(default_run: CliRun) -> None:
     assert "WCAG 1.1.1" in html and "Still needs a person to check" in html and "WCAG-EM" in html
 
 
+def test_every_finding_on_the_broken_page_comes_with_a_working_fix(default_run: CliRun) -> None:
+    from ui_automation.accessibility.fixes import _rgb, contrast
+
+    t = default_run.test("test_page_is_accessible[/a11y-bad")
+    fixes = {v["rule"]: v["fixes"][0] for v in t["accessibility"][0]["violations"]}
+    assert fixes["image-alt"]["fix"].startswith("<img src=\"data:image/gif;base64,") and fixes["image-alt"]["fix"].endswith('alt="Describe this image">')
+    assert fixes["label"]["fix"] == '<input type="text" name="email" aria-label="Email">'
+    assert fixes["html-has-lang"]["fix"] == '<html lang="en">'
+    assert 'aria-label="' in fixes["button-name"]["fix"] and 'aria-label="' in fixes["link-name"]["fix"]
+    css = fixes["color-contrast"]["fix"]
+    new = css.split("color: ")[1].split(";")[0]
+    assert contrast(_rgb(new), _rgb("#ffffff")) >= 4.5, css  # the page's grey #bbb on white, measured by axe
+
+
+def test_report_shows_fixes_with_copy_buttons(default_run: CliRun) -> None:
+    html = (default_run.run_dir / "summary.html").read_text(encoding="utf-8")
+    assert html.count("Suggested fix") >= 6 and html.count('class="copy"') >= 6
+    assert "&lt;input type=&quot;text&quot; name=&quot;email&quot; aria-label=&quot;Email&quot;&gt;" in html
+
+
 def test_report_only_mode_records_but_does_not_fail(tmp_path: Path, site) -> None:
     run = run_a11y(tmp_path, site, fail_on="none")
     assert run.returncode == 0, run.output
