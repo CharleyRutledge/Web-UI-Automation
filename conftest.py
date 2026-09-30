@@ -56,10 +56,13 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    # Only pipeline runs (python -m ui_automation: CLI, dashboard, CI) set WEB_UI_RUN_DIR. A plain
+    # `pytest` run still writes its summary but must not send email/Telegram or spend API credit.
+    pipeline_run = "WEB_UI_RUN_DIR" in os.environ
     run_dir = Path(os.environ.get("WEB_UI_RUN_DIR", "reports/latest"))
     try:
         settings = load_settings(session.config.getoption("--config"))
-        finalize_run(session, exitstatus, settings, run_dir.resolve())
+        finalize_run(session, exitstatus, settings, run_dir.resolve(), notify=pipeline_run)
     except Exception as exc:
         print(f"Pipeline finalize skipped: {exc}")
 

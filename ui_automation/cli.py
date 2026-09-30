@@ -64,11 +64,16 @@ def publish_latest_report(run_dir: Path, root: Path) -> Path:
 def open_report(path: Path) -> None:
     uri = path.resolve().as_uri()
     print(f"Opening report: {uri}")
-    if not webbrowser.open(uri):
+    try:
+        if webbrowser.open(uri):
+            return
         if sys.platform == "win32":
             os.startfile(path)  # noqa: S606
         else:
             subprocess.call(["xdg-open", str(path)])
+    except OSError:
+        # Headless machines (servers, CI, containers) have no browser; the run itself still succeeded.
+        print(f"Could not open a browser. Open the report manually: {path.resolve()}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.executable,
         "-m",
         "pytest",
-        str(root / "tests"),
+        # No explicit test path: pytest.ini's testpaths applies unless the user passes their own after --.
         f"--html={html_report}",
         "--self-contained-html",
         f"--css={report_css}",

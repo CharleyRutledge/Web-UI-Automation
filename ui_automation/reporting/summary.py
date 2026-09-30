@@ -15,6 +15,7 @@ class RunSummary:
     run_dir: Path | None = None
     video_files: list[Path] = field(default_factory=list)
     trace_files: list[Path] = field(default_factory=list)
+    failure_details: list[str] = field(default_factory=list)
 
     @property
     def total(self) -> int:

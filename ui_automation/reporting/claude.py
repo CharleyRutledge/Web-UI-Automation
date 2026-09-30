@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from ui_automation.reporting.summary import RunSummary
 
 
-def build_analysis_prompt(summary: RunSummary, report_excerpt: str = "") -> str:
+def build_analysis_prompt(summary: RunSummary) -> str:
     lines = [
         "You are a senior QA engineer reviewing a Playwright pytest run.",
         f"Status: {summary.short_status()}",
@@ -18,8 +18,8 @@ def build_analysis_prompt(summary: RunSummary, report_excerpt: str = "") -> str:
     ]
     if summary.report_html:
         lines.append(f"HTML report: {summary.report_html}")
-    if report_excerpt:
-        lines.append("\nReport excerpt:\n" + report_excerpt[:8000])
+    if summary.failure_details:
+        lines.append("\nFailures:\n" + "\n\n".join(summary.failure_details)[:12000])
     lines.append(
         "\nProvide: (1) one-line verdict, (2) likely root causes if failed, "
         "(3) top 3 next debugging steps using Playwright best practices."
@@ -37,15 +37,6 @@ def analyze_run(summary: RunSummary, ai: AiSettings) -> str | None:
     except ImportError:
         return None
 
-    excerpt = ""
-    if summary.report_html and summary.report_html.is_file():
-        try:
-            text = summary.report_html.read_text(encoding="utf-8", errors="ignore")
-            if "Failed" in text or "Error" in text:
-                excerpt = text[:12000]
-        except OSError:
-            pass
-
     client = Anthropic(api_key=api_key)
     message = client.messages.create(
         model=ai.model,
@@ -53,7 +44,7 @@ def analyze_run(summary: RunSummary, ai: AiSettings) -> str | None:
         messages=[
             {
                 "role": "user",
-                "content": build_analysis_prompt(summary, excerpt),
+                "content": build_analysis_prompt(summary),
             }
         ],
     )

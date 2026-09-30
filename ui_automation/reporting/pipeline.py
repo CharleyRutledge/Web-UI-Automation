@@ -57,6 +57,10 @@ def build_summary(session: pytest.Session, exitstatus: int, run_dir: Path) -> Ru
             items = reporter.stats.get(key, []) or []
             setattr(summary, stat_key, len(items))
         summary.errors = len(reporter.stats.get("error", []) or [])
+        for rep in (reporter.stats.get("failed", []) or []) + (reporter.stats.get("error", []) or []):
+            text = getattr(rep, "longreprtext", "") or ""
+            # Keep the end of each traceback: that is where the assertion / error message is.
+            summary.failure_details.append(f"{rep.nodeid} ({rep.when})\n{text[-3000:]}")
 
     output = session.config.getoption("--output")
     if output:
@@ -88,9 +92,19 @@ def write_summary_json(summary: RunSummary, run_dir: Path) -> Path:
     return path
 
 
-def finalize_run(session: pytest.Session, exitstatus: int, settings: Settings, run_dir: Path) -> None:
+def finalize_run(
+    session: pytest.Session,
+    exitstatus: int,
+    settings: Settings,
+    run_dir: Path,
+    *,
+    notify: bool = True,
+) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
     summary = build_summary(session, exitstatus, run_dir)
     write_summary_json(summary, run_dir)
+    if not notify:
+        return
 
     ai_text: str | None = None
     try:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import smtplib
+import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import TYPE_CHECKING
@@ -40,6 +41,8 @@ def send_run_email(
         body_lines.append("Video files:")
         for v in summary.video_files[:20]:
             body_lines.append(f"  - {v}")
+    if summary.failure_details:
+        body_lines.extend(["", "--- Failures ---", *summary.failure_details[:10]])
     if ai_summary:
         body_lines.extend(["", "--- Claude analysis ---", ai_summary])
 
@@ -49,13 +52,16 @@ def send_run_email(
     msg["To"] = ", ".join(email.to_addrs)
     msg.attach(MIMEText("\n".join(body_lines), "plain", "utf-8"))
 
+    # smtplib does not verify server certificates unless given a context; without this the SMTP
+    # password can be intercepted by anyone able to sit between us and the mail server.
+    tls_context = ssl.create_default_context()
     if email.smtp_port == 465:
-        smtp_cm = smtplib.SMTP_SSL(email.smtp_host, email.smtp_port, timeout=30)
+        smtp_cm = smtplib.SMTP_SSL(email.smtp_host, email.smtp_port, timeout=30, context=tls_context)
     else:
         smtp_cm = smtplib.SMTP(email.smtp_host, email.smtp_port, timeout=30)
     with smtp_cm as server:
         if email.use_tls and email.smtp_port != 465:
-            server.starttls()
+            server.starttls(context=tls_context)
         if email.smtp_user:
             server.login(email.smtp_user, email.smtp_password)
         server.sendmail(email.from_addr, list(email.to_addrs), msg.as_string())
