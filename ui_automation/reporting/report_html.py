@@ -13,7 +13,7 @@ from ui_automation.reporting.summary import RunSummary, TestResult
 # The report travels as one file (Telegram's limit is 50 MB, many mail servers stop at ~25 MB),
 # so media is embedded until this budget is used; anything beyond it is linked to the CI run.
 _EMBED_BUDGET_BYTES = 18 * 1024 * 1024
-_MIME = {".png": "image/png", ".mp4": "video/mp4", ".webm": "video/webm", ".zip": "application/zip"}
+_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".mp4": "video/mp4", ".webm": "video/webm", ".zip": "application/zip"}
 
 _CSS = """
 :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#667085; --line:#e4e7ec;
@@ -33,7 +33,7 @@ main { max-width:720px; margin:0 auto; padding:16px; }
 .hero.fail { background:var(--fail-bg); color:var(--fail); }
 .hero h1 { margin:0; font-size:26px; letter-spacing:.3px; }
 .hero p { margin:6px 0 0; color:var(--text); }
-.hero .meta { color:var(--text); opacity:.85; font-size:13px; margin-top:8px; word-break:break-all; }
+.hero .meta { color:var(--text); opacity:.85; font-size:13px; margin-top:8px; overflow-wrap:anywhere; }
 .tiles { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:16px; }
 @media (max-width:360px) { .tiles { grid-template-columns:repeat(2,1fr); } }
 .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px; text-align:center; }
@@ -44,7 +44,7 @@ h2 { font-size:16px; margin:20px 0 8px; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
 .card.fail { border-left:4px solid var(--fail); }
 .name { font-weight:600; word-break:break-word; }
-.file { color:var(--muted); font-size:13px; word-break:break-all; }
+.file { color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
 .step { margin-top:8px; }
 .tag { display:inline-block; font-weight:500; font-size:12px; color:var(--muted); border:1px solid var(--line);
        border-radius:999px; padding:0 8px; margin-left:4px; vertical-align:1px; }
@@ -131,7 +131,7 @@ class _Embedder:
         src = self.uri(path)
         return f'<img alt="{escape(alt)}" src="{src}">' if src else ""
 
-    def video(self, paths: list[str], label: str = "Test recording", described_by: str = "") -> str:
+    def video(self, paths: list[str], label: str = "Test recording", described_by: str = "", poster: str = "") -> str:
         """One player with every available encoding of the same recording."""
         sources = []
         for path in paths:
@@ -141,8 +141,10 @@ class _Embedder:
                 sources.append(f'<source src="{src}" type="{mime}">')
         if not sources:
             return ""
+        poster_uri = self.uri(poster) if poster and self.resolve(poster).is_file() else None
         return (
             f'<video controls playsinline muted preload="metadata" aria-label="{escape(label)}"'
+            f'{f" poster={chr(34)}{poster_uri}{chr(34)}" if poster_uri else ""}'
             f'{f" aria-describedby={chr(34)}{described_by}{chr(34)}" if described_by else ""}>'
             f'{"".join(sources)}Your viewer cannot play this video.</video>'
         )
@@ -158,7 +160,7 @@ def _tile(count: int, label: str, cls: str) -> str:
 
 
 def _variant(test: TestResult) -> str:
-    return f' <span class="tag">{escape(test.variant)}</span>' if test.variant else ""
+    return "".join(f' <span class="tag">{escape(tag)}</span>' for tag in test.variant_tags)
 
 
 def _failure_card(test: TestResult, media: _Embedder) -> str:
@@ -199,7 +201,8 @@ def _media_card(test: TestResult, media: _Embedder, run_name: str) -> str:
         # WCAG 1.2.1: the recording has no sound, so it needs a text alternative: the steps it shows.
         desc_id = "rec-" + hashlib.sha256(test.nodeid.encode()).hexdigest()[:12]
         shown = " → ".join(test.steps) if test.steps else "the browser while the test ran"
-        player = media.video(test.videos, f"Screen recording of {test.title}", desc_id)
+        poster = str(Path(test.videos[0]).parent / "poster.jpg")  # last frame, made by the pipeline
+        player = media.video(test.videos, f"Screen recording of {test.title}", desc_id, poster)
         parts.append(
             f'<div class="sub">Video</div>{player}'
             f'<div class="file" id="{desc_id}">Silent screen recording of: {escape(shown)}</div>'
@@ -359,7 +362,7 @@ def render_summary_html(summary: RunSummary, ai_text: str | None = None) -> str:
         "on": "traces are kept for every browser test",
     }.get(summary.tracing_mode, "")
     foot = [
-        f"Videos: {len(summary.video_files)} · Traces: {len(summary.trace_files)} "
+        f"Videos: {len({p.parent for p in summary.video_files})} · Traces: {len(summary.trace_files)} "
         f"(only browser tests record video{'; ' + trace_note if trace_note else ''})."
     ]
     if media.skipped:

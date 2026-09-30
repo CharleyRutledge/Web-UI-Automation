@@ -37,3 +37,20 @@ def test_invalid_config_raises_value_error(tmp_path, text):
 
 def test_status_includes_errors():
     assert "2 errors" in RunSummary(exit_status=1, errors=2).short_status()
+
+
+@pytest.mark.parametrize(
+    "name, tags",
+    [
+        ("test_x[-chromium]", ["chromium"]),
+        ("test_x[/-chromium]", ["/", "chromium"]),
+        ("test_x[/docs/intro-firefox]", ["/docs/intro", "firefox"]),
+        ("test_x[webkit]", ["webkit"]),
+        ("test_x[base_url_without_scheme]", ["base url without scheme"]),
+        ("test_x", []),
+    ],
+)
+def test_variant_tags(name: str, tags: list[str]) -> None:
+    from ui_automation.reporting.summary import TestResult
+
+    assert TestResult(f"tests/t.py::{name}", "passed").variant_tags == tags

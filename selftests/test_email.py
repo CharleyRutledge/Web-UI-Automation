@@ -158,3 +158,28 @@ def test_unresolved_credentials_skip(smtp, summary, capsys) -> None:
 def test_missing_sender_is_an_error(summary) -> None:
     with pytest.raises(ValueError, match="from_addr"):
         send_run_email(summary[0], settings(1, from_addr=""))
+
+
+def test_report_bug_still_sends_a_fallback_report(smtp, tmp_path: Path, capsys) -> None:
+    """If building the report fails (here: a corrupt summary.json), notifications still go out."""
+    import json
+
+    import yaml
+
+    from ui_automation.config import load_settings
+    from ui_automation.reporting.pipeline import notify_run
+
+    controller, sink = smtp()
+    s, _ = make_summary(tmp_path / "run", failures=1)
+    data = s.to_dict()
+    data["tests"][0]["videos"] = [12345]  # not a path: rendering this crashes
+    (s.run_dir / "summary.json").write_text(json.dumps(data), encoding="utf-8")
+    cfg = tmp_path / "s.yaml"
+    cfg.write_text(yaml.safe_dump({"base_url": "http://127.0.0.1", "notifications": {"email": {
+        "enabled": True, "smtp_host": "127.0.0.1", "smtp_port": controller.port, "use_tls": False,
+        "from_addr": "a@b.c", "to_addrs": ["d@e.f"]}}}))
+    report = notify_run(s.run_dir, load_settings(cfg))
+    assert "sending a plain fallback report" in capsys.readouterr().out
+    assert "could not be built" in report.read_text()
+    [(_, _, msg)] = sink.messages
+    assert any(p.get_filename() == "ui-test-report.html" for p in msg.walk())

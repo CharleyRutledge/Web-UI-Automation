@@ -67,6 +67,13 @@ def _to_mp4(webm: Path) -> Path | None:
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"MP4 conversion skipped for {webm.name}: {exc}")
         return None
+    # A poster frame (the last frame: the page as the test left it) so players don't show black.
+    poster = webm.with_name("poster.jpg")
+    try:
+        subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-sseof", "-0.3", "-i", str(webm), "-frames:v", "1",
+                        "-vf", "scale=640:-2", "-q:v", "6", str(poster)], check=True, timeout=60, capture_output=True)
+    except (OSError, subprocess.SubprocessError):
+        pass  # the video still plays; it just starts on a black frame
     return mp4
 
 
@@ -198,6 +205,19 @@ def _ci_run_url() -> str:
     return f"{server}/{repo}/actions/runs/{run_id}" if server and repo and run_id else ""
 
 
+def _fallback_report(summary: RunSummary, exc: Exception) -> str:
+    from html import escape
+
+    rows = "".join(f"<li>{escape(t.outcome.upper())}: {escape(t.nodeid)}</li>" for t in summary.tests)
+    return (
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1"><title>UI tests</title></head>'
+        f"<body><main><h1>{escape(summary.headline())}</h1>"
+        f"<p>The full report could not be built ({escape(type(exc).__name__)}). Results:</p><ul>{rows}</ul>"
+        "</main></body></html>"
+    )
+
+
 def notify_run(run_dir: Path, settings: Settings) -> Path | None:
     """Runs after pytest has exited (so every file exists): AI analysis, clean report, notifications."""
     summary_path = run_dir / "summary.json"
@@ -217,7 +237,12 @@ def notify_run(run_dir: Path, settings: Settings) -> Path | None:
         print(f"Claude analysis skipped: {exc}")
 
     report_path = run_dir / "summary.html"
-    report_path.write_text(render_summary_html(summary, ai_text), encoding="utf-8")
+    try:
+        html = render_summary_html(summary, ai_text)
+    except Exception as exc:  # noqa: BLE001 - a report bug must never cost the run its notifications
+        print(f"Summary report failed ({type(exc).__name__}: {exc}); sending a plain fallback report")
+        html = _fallback_report(summary, exc)
+    report_path.write_text(html, encoding="utf-8")
     print(f"Summary report: {report_path}")
 
     try:

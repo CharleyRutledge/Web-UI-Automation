@@ -111,3 +111,18 @@ def test_no_playwright_output_is_lost(run: CliRun) -> None:
     copied = list(artifact(run, "videos").rglob("*.webm"))
     assert webms and len(copied) == len(webms)
     assert len(list(artifact(run, "traces").rglob("*.zip"))) == len(list(raw.rglob("trace.zip")))
+
+
+def test_videos_have_a_poster_frame(run: CliRun) -> None:
+    """Players show the page as the test left it instead of a black box (needs ffmpeg, like MP4)."""
+    t = run.test("test_passes")
+    poster = artifact(run, t["videos"][0]).parent / "poster.jpg"
+    assert poster.is_file() is HAS_FFMPEG
+    html = (run.run_dir / "summary.html").read_text(encoding="utf-8")
+    assert ('poster="data:image/jpeg' in html) is HAS_FFMPEG
+
+
+def test_video_count_counts_recordings_not_files(run: CliRun) -> None:
+    html = (run.run_dir / "summary.html").read_text(encoding="utf-8")
+    recordings = len({artifact(run, v).parent for t in run.summary["tests"] for v in t["videos"]})
+    assert f"Videos: {recordings} ·" in html

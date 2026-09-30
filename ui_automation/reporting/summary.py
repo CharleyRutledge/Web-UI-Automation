@@ -32,9 +32,27 @@ class TestResult:
     @property
     def variant(self) -> str:
         """'test_x[chromium]' -> 'chromium' (the parametrize id), '' when there is none."""
+        return " · ".join(self.variant_tags)
+
+    @property
+    def variant_tags(self) -> list[str]:
+        """The parametrize id split into readable tags. pytest-playwright appends the browser with '-',
+        so 'test_x[/docs/intro-chromium]' -> ['/docs/intro', 'chromium'] and 'test_x[-chromium]' -> ['chromium']."""
         if "[" not in self.name:
-            return ""
-        return self.name.split("[", 1)[1].rstrip("]").replace("_", " ")
+            return []
+        inside = self.name.split("[", 1)[1][:-1] if self.name.endswith("]") else self.name.split("[", 1)[1]
+        for browser in ("chromium", "firefox", "webkit"):
+            if inside == browser:
+                return [browser]
+            if inside.endswith("-" + browser):
+                param = inside[: -len(browser) - 1]
+                return ([self._readable(param)] if param else []) + [browser]
+        return [self._readable(inside)] if inside else []
+
+    @staticmethod
+    def _readable(param: str) -> str:
+        # Paths and URLs stay as written; ids like 'base_url_without_scheme' read better with spaces.
+        return param if "/" in param else param.replace("_", " ")
 
     @property
     def last_step(self) -> str:
