@@ -50,7 +50,9 @@ class _RunIndex:
         if not self.reports_dir.is_dir():
             return [], 0
         names = sorted(
-            (e.name for e in os.scandir(self.reports_dir) if e.is_dir() and e.name != "latest"), reverse=True
+            (e.name for e in os.scandir(self.reports_dir)
+             if e.is_dir() and e.name != "latest" and not e.name.startswith(".")),
+            reverse=True
         )
         shown = names if limit is None else names[:limit]
         return [self._row(name) for name in shown], len(names)

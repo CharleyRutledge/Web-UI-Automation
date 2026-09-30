@@ -177,3 +177,39 @@ def test_notification_failures_never_break_the_run(run_cli, site, telegram_api, 
     assert "Telegram notification skipped: Telegram sendDocument returned HTTP 500" in r.output
     assert "Email notification skipped" in r.output
     assert (r.run_dir / "summary.html").is_file() and "Traceback" not in r.output
+
+
+def _publish(args: tuple[str, str]) -> str | None:
+    from ui_automation.cli import publish_latest_report
+
+    try:
+        publish_latest_report(Path(args[0]), Path(args[1]))
+        return None
+    except Exception as exc:  # noqa: BLE001 - report any crash
+        return f"{type(exc).__name__}: {exc}"
+
+
+def test_latest_is_published_safely_by_simultaneous_runs(tmp_path: Path) -> None:
+    """16 processes publish reports/latest at the same moment (as parallel CI runs can). Before the fix,
+    most crashed and `latest` mixed files from different runs."""
+    from multiprocessing import get_context
+
+    reports = tmp_path / "reports"
+    runs = []
+    for i in range(16):
+        run = reports / f"2026_{i:02d}"
+        for folder in ("screenshots", "failure-screenshots", "videos", "traces"):
+            for j in range(20):
+                f = run / folder / f"t{j}" / "file.bin"
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_bytes(os.urandom(1000))
+        for name in ("report.html", "summary.json", "summary.html"):
+            (run / name).write_text(f"run {i}")
+        runs.append(run)
+    with get_context("spawn").Pool(16) as pool:
+        errors = [e for e in pool.map(_publish, [(str(r), str(reports)) for r in runs]) if e]
+    assert errors == []
+    latest = reports / "latest"
+    assert len({(latest / n).read_text() for n in ("report.html", "summary.json", "summary.html")}) == 1
+    assert len(list((latest / "videos").iterdir())) == 20
+    assert [p.name for p in reports.iterdir() if p.name.startswith(".")] == [], "no staging/lock leftovers"

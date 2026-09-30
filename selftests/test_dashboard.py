@@ -251,3 +251,16 @@ def _proc_net_listen() -> str:
         except OSError:
             pass
     return "\n".join(l.split()[1] for l in lines)
+
+
+def test_hidden_work_folders_are_not_listed(tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    seed_run(reports, "20260101_000000")
+    (reports / ".latest-staging-123").mkdir()
+    (reports / ".latest.lock").mkdir()
+    d = Dashboard(reports)
+    try:
+        html = d.get("/").text
+        assert "20260101_000000" in html and ".latest" not in html
+    finally:
+        d.server.shutdown()

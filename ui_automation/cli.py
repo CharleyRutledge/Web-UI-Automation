@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import shutil
 import subprocess
 import sys
+import time
+import uuid
 import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,34 +51,62 @@ def new_run_dir(reports_dir: Path) -> Path:
     raise RuntimeError(f"Could not create a unique run folder under {reports_dir}")
 
 
+@contextlib.contextmanager
+def _dir_lock(lock: Path, timeout: float = 60.0, stale_after: float = 300.0):
+    """Cross-process lock: mkdir is atomic on every OS. A lock older than `stale_after` is from a crashed run."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            lock.mkdir()
+            break
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > stale_after:
+                    lock.rmdir()
+                    continue
+            except OSError:
+                continue
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"{lock} is held by another run") from None
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        try:
+            lock.rmdir()
+        except OSError:
+            pass
+
+
+_LATEST_FILES = ("report.html", "claude_summary.txt", "summary.json", "summary.html")
+_LATEST_DIRS = ("screenshots", "failure-screenshots", "videos", "traces")
+
+
 def publish_latest_report(run_dir: Path, reports_dir: Path) -> Path:
-    """Copy the run report and artifacts to <reports>/latest for a stable path."""
-    latest_dir = reports_dir / "latest"
-    latest_dir.mkdir(parents=True, exist_ok=True)
-    src = run_dir / "report.html"
-    dst = latest_dir / "report.html"
-    if src.is_file():
-        shutil.copy2(src, dst)
-    elif dst.exists():
-        dst.unlink()
+    """Make <reports>/latest a complete copy of this run, safely even when runs finish at the same time.
 
-    for folder in ("screenshots", "failure-screenshots", "videos", "traces"):
-        src_dir = run_dir / folder
-        dst_dir = latest_dir / folder
-        if dst_dir.exists():
-            shutil.rmtree(dst_dir)  # never leave artifacts from an older run in "latest"
-        if src_dir.is_dir():
-            shutil.copytree(src_dir, dst_dir)
+    The copy is built in a private staging folder and then swapped in with atomic renames under a lock,
+    so `latest` is never half-written or a mix of two runs.
+    """
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    token = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    staging = reports_dir / f".latest-staging-{token}"
+    staging.mkdir()
+    for name in _LATEST_FILES:
+        if (run_dir / name).is_file():
+            shutil.copy2(run_dir / name, staging / name)
+    for folder in _LATEST_DIRS:
+        if (run_dir / folder).is_dir():
+            shutil.copytree(run_dir / folder, staging / folder)
 
-    for name in ("claude_summary.txt", "summary.json", "summary.html"):
-        file_src = run_dir / name
-        file_dst = latest_dir / name
-        if file_src.is_file():
-            shutil.copy2(file_src, file_dst)
-        elif file_dst.exists():
-            file_dst.unlink()
-
-    return dst
+    latest = reports_dir / "latest"
+    retired = reports_dir / f".latest-old-{token}"
+    with _dir_lock(reports_dir / ".latest.lock"):
+        if latest.exists():
+            os.replace(latest, retired)
+        os.replace(staging, latest)
+    shutil.rmtree(retired, ignore_errors=True)
+    return latest / "report.html"
 
 
 def open_report(path: Path) -> None:
