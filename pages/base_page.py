@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page, expect
 
 from ui_automation.config import Settings
@@ -59,11 +60,18 @@ class BasePage:
         """Record a human-readable step and capture a screenshot for the HTML report."""
         filename = f"{self._step_index:03d}_{_slug(label)}.png"
         self._step_index += 1
+        if self.page.url == "about:blank":
+            return  # nothing to capture yet; recent Chromium builds refuse to screenshot a blank page
         path = self._artifacts_dir / filename
-        self.page.screenshot(
-            path=str(path),
-            full_page=self.settings.screenshot_full_page,
-        )
+        try:
+            self.page.screenshot(
+                path=str(path),
+                full_page=self.settings.screenshot_full_page,
+            )
+        except PlaywrightError as exc:
+            # A diagnostic screenshot must never fail the test itself.
+            print(f"Step screenshot skipped for {label!r}: {exc.message.splitlines()[0]}")
+            return
         self._request.node.step_screenshots.append((label, str(path)))
 
     def goto_path(self, path: str) -> None:
