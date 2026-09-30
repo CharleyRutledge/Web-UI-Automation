@@ -54,6 +54,25 @@ class TelegramSettings:
 
 
 @dataclass(frozen=True)
+class AccessibilitySettings:
+    enabled: bool = True
+    standard: str = "wcag21aa"  # EN 301 549 today; "wcag22aa" adds the WCAG 2.2 criteria
+    fail_on: str = "serious"  # minor | moderate | serious | critical | none (report only)
+    pages: tuple[str, ...] = ("/",)
+
+
+DEFAULT_COMPLIANCE_CHECKS = ("privacy_notice", "cookie_consent", "accessibility_statement", "company_details",
+                             "contact_details")
+
+
+@dataclass(frozen=True)
+class ComplianceSettings:
+    enabled: bool = False
+    pages: tuple[str, ...] = ("/",)
+    checks: tuple[str, ...] = DEFAULT_COMPLIANCE_CHECKS
+
+
+@dataclass(frozen=True)
 class NotificationSettings:
     email: EmailSettings = field(default_factory=EmailSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
@@ -73,6 +92,8 @@ class Settings:
     artifacts: ArtifactSettings
     ai: AiSettings
     notifications: NotificationSettings
+    accessibility: AccessibilitySettings = field(default_factory=AccessibilitySettings)
+    compliance: ComplianceSettings = field(default_factory=ComplianceSettings)
 
     @property
     def video_mode(self) -> str:
@@ -199,6 +220,55 @@ def _load_artifacts(raw: Mapping[str, Any] | None) -> ArtifactSettings:
     return ArtifactSettings(video=video, tracing=tracing, navigation_wait_until=wait)
 
 
+_A11Y_STANDARDS = ("wcag21aa", "wcag22aa")
+_A11Y_FAIL_ON = ("minor", "moderate", "serious", "critical", "none")
+
+
+def _pages(raw: Any, name: str) -> tuple[str, ...]:
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)) or not raw or not all(isinstance(p, str) and p.strip() for p in raw):
+        raise ValueError(f"settings.yaml: {name} must be a list of paths like '/' or '/contact'")
+    return tuple(p.strip() if p.strip().startswith(("/", "http://", "https://")) else "/" + p.strip() for p in raw)
+
+
+def _load_compliance(raw: Mapping[str, Any] | None) -> ComplianceSettings:
+    from ui_automation.compliance import ALL_CHECKS
+
+    raw = raw or {}
+    checks_raw = raw.get("checks", list(DEFAULT_COMPLIANCE_CHECKS))
+    if isinstance(checks_raw, str):
+        checks_raw = [checks_raw]
+    if not isinstance(checks_raw, (list, tuple)) or not checks_raw:
+        raise ValueError("settings.yaml: compliance.checks must be a list")
+    checks = tuple(str(c).strip().lower() for c in checks_raw)
+    unknown = [c for c in checks if c not in ALL_CHECKS]
+    if unknown:
+        raise ValueError(f"settings.yaml: compliance.checks has unknown {unknown}; choose from {list(ALL_CHECKS)}")
+    return ComplianceSettings(
+        enabled=_as_bool(raw.get("enabled"), False, "compliance.enabled"),
+        pages=_pages(raw.get("pages", ["/"]), "compliance.pages"),
+        checks=checks,
+    )
+
+
+def _load_accessibility(raw: Mapping[str, Any] | None) -> AccessibilitySettings:
+    raw = raw or {}
+    standard = str(raw.get("standard") or "wcag21aa").lower()
+    if standard not in _A11Y_STANDARDS:
+        raise ValueError(f"settings.yaml: accessibility.standard must be one of {_A11Y_STANDARDS}")
+    fail_on = str(raw.get("fail_on") or "serious").lower()
+    if fail_on not in _A11Y_FAIL_ON:
+        raise ValueError(f"settings.yaml: accessibility.fail_on must be one of {_A11Y_FAIL_ON}")
+    pages = _pages(raw.get("pages", ["/"]), "accessibility.pages")
+    return AccessibilitySettings(
+        enabled=_as_bool(raw.get("enabled"), True, "accessibility.enabled"),
+        standard=standard,
+        fail_on=fail_on,
+        pages=pages,
+    )
+
+
 def _load_ai(raw: Mapping[str, Any] | None) -> AiSettings:
     raw = raw or {}
     if raw.get("enabled") is not None:
@@ -251,6 +321,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
         screenshot_full_page=_as_bool(m.get("screenshot_full_page"), True, "screenshot_full_page"),
         artifacts=_load_artifacts(_section(m, "artifacts")),
         ai=_load_ai(_section(m, "ai")),
+        accessibility=_load_accessibility(_section(m, "accessibility")),
+        compliance=_load_compliance(_section(m, "compliance")),
         notifications=NotificationSettings(
             email=_load_email(_section(notif_raw, "email")),
             telegram=_load_telegram(_section(notif_raw, "telegram")),

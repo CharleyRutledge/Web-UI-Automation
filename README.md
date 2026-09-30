@@ -30,6 +30,24 @@ python -m ui_automation --open
 Invoke-Item .\reports\latest\report.html
 ```
 
+## Accessibility and website requirements
+
+**Accessibility** (`accessibility:` in `config/settings.yaml`, on by default): every page in `pages` is
+scanned in the real browser with [axe-core](https://github.com/dequelabs/axe-core) 4.13 (vendored, checksum
+verified). The default standard is **WCAG 2.1 AA**, the level EN 301 549 requires under the EU Web
+Accessibility Directive (S.I. 358/2020) and the European Accessibility Act; `wcag22aa` adds the WCAG 2.2
+criteria. Each issue is reported with its WCAG success criterion, examples and a fix link, and the test fails
+at `fail_on` severity (`none` = report only). Automated rules cannot prove conformance: the report lists what
+still needs a person to check, following the W3C WCAG-EM method (scope, explore, sample, audit, report).
+The report and dashboard themselves are tested against WCAG 2.2 AA (axe, keyboard, focus, 320 px reflow).
+
+**Website requirements (Ireland / EU)** (`compliance:`, off by default): checks each page, before any
+consent is given, for a privacy notice link (GDPR Art. 13/14), no tracking cookies or tracker requests
+before consent and a reject option (ePrivacy Regulations S.I. 336/2011, DPC guidance), an accessibility
+statement link, company details (Companies Act 2014 s.151, S.I. 68/2003), contact details and terms.
+Trackers are blocked during the check, so tests never send analytics. These checks find what is missing or
+misbehaving; the wording of policies still needs review (and legal advice).
+
 ## Testing the framework itself
 
 The framework has its own test suite in `selftests/` (separate from the UI tests in `tests/`). Every test
@@ -39,8 +57,8 @@ TLS, login), and local stand-ins for the Telegram and Anthropic APIs, used for t
 
 ```powershell
 python -m pip install -r requirements-dev.txt
-python -m pytest -c selftests/pytest.ini selftests            # every push in CI (~2 min)
-python -m pytest -c selftests/pytest.ini selftests -m load -s # nightly: load / performance numbers
+python -m pytest -c selftests/pytest.ini selftests            # every push and weekly in CI (~2.5 min)
+python -m pytest -c selftests/pytest.ini selftests -m load -s # weekly: load / performance numbers
 python -m pytest -c selftests/pytest.ini selftests -m live    # weekly: real Claude + Telegram (needs secrets)
 ```
 
@@ -53,6 +71,8 @@ python -m pytest -c selftests/pytest.ini selftests -m live    # weekly: real Cla
 | Telegram | document + caption, chat discovery, 400/401/429/500/502, broken JSON, timeout, connection refused, caption limit, token never leaked |
 | Claude | request contents, no call on green runs, 400/401/404, 429 retry, 500/529 give-up, refusal, timeout, prompt size cap, failures never break the run |
 | Security | report escaping (test names, messages, AI text, media paths), dashboard XSS, path traversal and symlink escape, CSRF, DNS rebinding, loopback-only binding, secret scan of all output and artifacts, `pip-audit`, `bandit` |
+| Accessibility | our report and dashboard meet WCAG 2.2 AA (axe, keyboard, focus, reflow, text alternatives); scanning of accessible and broken pages; standards and thresholds |
+| Website requirements | compliant vs non-compliant shop page: tracking cookies and tracker requests before consent, accept-only banners, missing or broken links, company details |
 | Load | dashboard with 2,000 runs under 16 concurrent clients, 5 MB report downloads, a 500-test run, concurrent CLI runs, report size budget |
 
 The `CLI` also honours `WEB_UI_REPORTS_DIR` (where run folders go) and `TELEGRAM_API_BASE` (Bot API address).

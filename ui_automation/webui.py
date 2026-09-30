@@ -99,6 +99,7 @@ _PAGE = """
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>UI Automation Dashboard</title>
 <style>
   :root { color-scheme: light; }
@@ -110,20 +111,26 @@ _PAGE = """
   main { max-width: 960px; margin: 32px auto; padding: 0 20px; }
   .card { background: #fff; border: 1px solid #e2e4e9; border-radius: 8px; padding: 20px;
           margin-bottom: 20px; }
-  form.run-form button { background: #3b6ff2; color: #fff; border: none; padding: 10px 18px;
+  form.run-form button { background: #2453c7; color: #fff; border: none; padding: 10px 18px;
           border-radius: 6px; font-size: 14px; cursor: pointer; }
-  form.run-form button:hover { background: #2f59c9; }
+  form.run-form button:hover { background: #1b3f9c; }
+  :focus-visible { outline: 3px solid #f5b700; outline-offset: 2px; }
   table { width: 100%; border-collapse: collapse; }
+  .table-scroll { overflow-x: auto; position: relative; }  /* contains the absolutely-positioned sr-only labels */
+  tbody th { font-weight: 400; color: inherit; text-transform: none; font-size: 14px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+             clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  @media (max-width: 600px) { header { padding: 16px; flex-wrap: wrap; gap: 12px; } main { margin: 16px auto; padding: 0 12px; } }
   th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eceef2; font-size: 14px; }
   th { color: #666; font-weight: 600; font-size: 12px; text-transform: uppercase; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px;
            font-weight: 600; }
   .badge.pass { background: #e3f7e9; color: #1e7e34; }
   .badge.fail { background: #fdeceb; color: #c0392b; }
-  .badge.unknown { background: #eee; color: #666; }
-  a.report-link { color: #3b6ff2; text-decoration: none; font-weight: 500; }
+  .badge.unknown { background: #eee; color: #4a4a4a; }
+  a.report-link { color: #2453c7; text-decoration: none; font-weight: 500; }
   a.report-link:hover { text-decoration: underline; }
-  .empty { color: #888; font-size: 14px; }
+  .empty { color: #595959; font-size: 14px; }
   .flash { background: #fff8e1; border: 1px solid #ffe08a; padding: 12px 16px; border-radius: 6px;
            margin-bottom: 20px; font-size: 14px; white-space: pre-wrap; }
 </style>
@@ -136,16 +143,19 @@ _PAGE = """
   </form>
 </header>
 <main>
-  {% if message %}<div class="flash">{{ message }}</div>{% endif %}
+  <div role="status">{% if message %}<div class="flash">{{ message }}</div>{% endif %}</div>
   <div class="card">
+    <div class="table-scroll" role="region" aria-label="Test runs" tabindex="0">
     <table>
+      <caption class="sr-only">Test runs, newest first</caption>
       <thead>
-        <tr><th>Run</th><th>Status</th><th>Passed</th><th>Failed</th><th>Skipped</th><th>Errors</th><th>Report</th></tr>
+        <tr><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Passed</th><th scope="col">Failed</th>
+            <th scope="col">Skipped</th><th scope="col">Errors</th><th scope="col">Report</th></tr>
       </thead>
       <tbody>
       {% for row in runs %}
         <tr>
-          <td>{{ row.run_id }}</td>
+          <th scope="row">{{ row.run_id }}</th>
           <td>
             {% if row.ok is none %}
               <span class="badge unknown">unknown</span>
@@ -161,8 +171,8 @@ _PAGE = """
           <td>{{ row.errors }}</td>
           <td>
             {% if row.has_report %}
-              {% if row.has_summary %}<a class="report-link" href="/reports/{{ row.run_id }}/summary.html" target="_blank">Summary</a> · {% endif %}
-              <a class="report-link" href="/reports/{{ row.run_id }}/report.html" target="_blank">Full report</a>
+              {% if row.has_summary %}<a class="report-link" href="/reports/{{ row.run_id }}/summary.html" target="_blank">Summary<span class="sr-only"> for run {{ row.run_id }} (opens in a new tab)</span></a> · {% endif %}
+              <a class="report-link" href="/reports/{{ row.run_id }}/report.html" target="_blank">Full report<span class="sr-only"> for run {{ row.run_id }} (opens in a new tab)</span></a>
             {% else %}
               <span class="empty">n/a</span>
             {% endif %}
@@ -173,6 +183,7 @@ _PAGE = """
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% if total > runs|length %}
       <p class="empty">Showing the newest {{ runs|length }} of {{ total }} runs. <a class="report-link" href="/?all=1">Show all</a></p>
     {% endif %}

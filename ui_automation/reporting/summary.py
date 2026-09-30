@@ -20,6 +20,8 @@ class TestResult:
     failure_screenshots: list[str] = field(default_factory=list)  # taken by Playwright at the failure
     videos: list[str] = field(default_factory=list)  # the same recording: .mp4 (if converted) then .webm
     traces: list[str] = field(default_factory=list)  # Playwright trace .zip (open at trace.playwright.dev)
+    accessibility: list[dict] = field(default_factory=list)  # one entry per page scanned by expect_accessible
+    compliance: list[dict] = field(default_factory=list)  # one entry per website compliance check
 
     @property
     def title(self) -> str:

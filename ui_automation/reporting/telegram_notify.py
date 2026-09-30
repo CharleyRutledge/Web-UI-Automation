@@ -59,6 +59,19 @@ def build_caption(summary: RunSummary) -> str:
             lines.append(f"• {test.title}{where}: {reason}")
         if len(problems) > 5:
             lines.append(f"…and {len(problems) - 5} more")
+    scans = [scan for t in summary.tests for scan in t.accessibility]
+    if scans:
+        issues = sum(len(scan["violations"]) for scan in scans)
+        lines.append("")
+        lines.append(f"Accessibility: {issues} issue type(s) on {len(scans)} page(s)" if issues
+                     else f"Accessibility: no issues found on {len(scans)} page(s)")
+    checks = [r for t in summary.tests for entry in t.compliance for r in entry["results"]]
+    if checks:
+        failed = [r for r in checks if not r["passed"]]
+        if not scans:
+            lines.append("")
+        lines.append(f"Website requirements: {len(failed)} problem(s): " + ", ".join(sorted({r['title'] for r in failed}))
+                     if failed else "Website requirements: all checks passed")
     lines.append("")
     lines.append("Full details are in the attached report.")
     if summary.run_url:

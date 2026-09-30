@@ -1,4 +1,4 @@
-"""Load and performance (nightly): python -m pytest -c selftests/pytest.ini selftests -m load"""
+"""Load and performance (weekly): python -m pytest -c selftests/pytest.ini selftests -m load"""
 
 from __future__ import annotations
 

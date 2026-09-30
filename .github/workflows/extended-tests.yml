@@ -2,8 +2,9 @@ name: Extended tests
 
 on:
   schedule:
-    - cron: "17 2 * * *"   # nightly: load / performance
-    - cron: "43 6 * * 1"   # Mondays: live check against the real Telegram and Anthropic APIs
+    # Weekly, Mondays (UTC). Load runs first; the live check an hour later.
+    - cron: "17 5 * * 1"   # load / performance
+    - cron: "43 6 * * 1"   # live check against the real Telegram and Anthropic APIs
   workflow_dispatch:
     inputs:
       suite:
@@ -17,7 +18,7 @@ permissions:
 
 jobs:
   load:
-    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'load' || github.event.schedule == '17 2 * * *'
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'load' || github.event.schedule == '17 5 * * 1'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

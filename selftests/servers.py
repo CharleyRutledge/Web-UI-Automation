@@ -62,7 +62,49 @@ class _Server:
 
 # --------------------------------------------------------------------------- scenario website
 
-_PAGE = "<!doctype html><html><head><title>{title}</title></head><body>{body}</body></html>"
+_PAGE = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{title}</title></head>'
+         "<body><main>{body}</main></body></html>")
+
+
+A11Y_GOOD = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Accessible page</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body><header><a href="#main">Skip to content</a></header><main id="main"><h1>Contact us</h1>
+<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="Our office on Main Street">
+<form><label for="email">Email</label> <input id="email" type="email" autocomplete="email">
+<button type="submit">Send</button></form><p style="color:#222;background:#fff">Plenty of contrast.</p>
+</main><footer><a href="/privacy">Privacy notice</a></footer></body></html>"""
+
+# Deliberately broken: missing lang, image without alt, unlabeled input, empty button, low contrast, bad link.
+A11Y_BAD = """<!doctype html><html><head><meta charset="utf-8"><title>Broken page</title></head>
+<body><div><h1>Contact us</h1><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+<input type="text" name="email"><button></button>
+<p style="color:#bbb;background:#fff">Hard to read grey text.</p><a href="#"></a></div></body></html>"""
+
+_FOOTER_GOOD = """<footer><a href="/privacy">Privacy notice</a> · <a href="/cookies">Cookie policy</a> ·
+<a href="/accessibility">Accessibility statement</a> · <a href="/terms">Terms and conditions</a> ·
+<a href="/contact">Contact us</a><p>Example Trading Ltd, registered in Ireland, company number 654321.
+Registered office: 1 Main Street, Dublin 2, D02 X285. VAT No. IE1234567T. Email: <a href="mailto:hello@example.ie">hello@example.ie</a></p></footer>"""
+
+LEGAL_PAGES: dict[str, str] = {
+    "/legal-good": f"""<!doctype html><html lang="en"><head><title>Shop</title></head><body><main><h1>Shop</h1>
+<div role="dialog" aria-label="Cookies"><p>We use analytics cookies only if you agree.</p>
+<button>Accept all</button> <button>Reject all</button></div></main>{_FOOTER_GOOD}</body></html>""",
+    # Tracking before consent, accept-only banner, and none of the required information.
+    "/legal-bad": """<!doctype html><html lang="en"><head><title>Shop</title>
+<script>document.cookie = "_fbp=fb.1.123.456; path=/";</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-TEST0000"></script></head>
+<body><main><h1>Shop</h1><div class="banner">We use cookies. <button>Accept</button></div></main>
+<footer><a href="/privacy-broken">Privacy</a></footer></body></html>""",
+    "/privacy": "<!doctype html><html lang='en'><head><title>Privacy</title></head><body><h1>Privacy notice</h1></body></html>",
+    "/cookies": "<!doctype html><html lang='en'><head><title>Cookies</title></head><body><h1>Cookies</h1></body></html>",
+    "/accessibility": "<!doctype html><html lang='en'><head><title>Accessibility</title></head><body><h1>Accessibility statement</h1></body></html>",
+    "/terms": "<!doctype html><html lang='en'><head><title>Terms</title></head><body><h1>Terms</h1></body></html>",
+    "/contact": "<!doctype html><html lang='en'><head><title>Contact</title></head><body><h1>Contact</h1></body></html>",
+}
+LEGAL_HEADERS: dict[str, dict[str, str]] = {
+    "/legal-good": {"Set-Cookie": "sessionid=abc123; Path=/; HttpOnly; SameSite=Lax"},  # strictly necessary: fine
+    "/legal-bad": {"Set-Cookie": "_ga=GA1.1.111.222; Path=/"},
+}
 
 
 class _SiteHandler(BaseHTTPRequestHandler):
@@ -97,6 +139,12 @@ class _SiteHandler(BaseHTTPRequestHandler):
         elif path == "/tall":
             rows = "".join(f"<p>Row {i}</p>" for i in range(400))
             self._send(200, _PAGE.format(title="Tall", body=f"<h1>Installation</h1>{rows}"))
+        elif path == "/a11y-good":
+            self._send(200, A11Y_GOOD)
+        elif path == "/a11y-bad":
+            self._send(200, A11Y_BAD)
+        elif path in LEGAL_PAGES:
+            self._send(200, LEGAL_PAGES[path], LEGAL_HEADERS.get(path))
         elif path == "/secret":
             self._send(200, _PAGE.format(title="Account", body="<h1>Account</h1><p>token=SENTINEL_PAGE_SECRET</p>"))
         else:

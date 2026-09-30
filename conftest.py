@@ -187,6 +187,11 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     if report.when != "call":
         return
 
+    for key in ("accessibility", "compliance"):
+        recorded = getattr(item, key, None)
+        if recorded:
+            report.user_properties.append((key, recorded))
+
     early_steps = getattr(item, "step_screenshots", []) or []
     if early_steps:
         report.user_properties.append(("step_screenshots", [path for _, path in early_steps]))

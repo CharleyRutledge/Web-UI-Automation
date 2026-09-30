@@ -75,7 +75,8 @@ class BasePage:
         self._request.node.step_screenshots.append((label, str(path)))
 
     def goto_path(self, path: str) -> None:
-        path = path if path.startswith("/") else f"/{path}"
+        if not path.startswith(("/", "http://", "https://")):
+            path = f"/{path}"
         self.step(f"Navigate to {path}")
         self.page.goto(
             path,
@@ -115,6 +116,31 @@ class BasePage:
         expect(self.page).to_have_title(
             re.compile(re.escape(text), re.IGNORECASE),
         )
+
+    def expect_accessible(self, *, fail_on: str | None = None) -> list:
+        """Scan the current page with axe-core against the configured WCAG standard.
+
+        Every finding is recorded for the report; the test fails when any is at or above `fail_on`
+        (default: accessibility.fail_on in settings.yaml; "none" only reports).
+        """
+        from ui_automation.accessibility import at_or_above, describe, scan
+
+        cfg = self.settings.accessibility
+        threshold = fail_on or cfg.fail_on
+        self.step(f"Check accessibility ({cfg.standard.upper()})")
+        violations = scan(self.page, cfg.standard)
+        record = getattr(self._request.node, "accessibility", None)
+        if record is None:
+            record = self._request.node.accessibility = []
+        record.append({
+            "url": self.page.url,
+            "standard": cfg.standard,
+            "violations": [v.__dict__ for v in violations],
+        })
+        blocking = [] if threshold == "none" else at_or_above(violations, threshold)
+        if blocking:
+            raise AssertionError(f"{self.page.url}: " + describe(blocking))
+        return violations
 
     def expect_heading(self, name: str) -> None:
         self.expect_visible(

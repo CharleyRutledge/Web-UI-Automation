@@ -21,9 +21,11 @@ SECRETS = {
 
 @pytest.fixture(scope="module")
 def hostile_run(tmp_path_factory: pytest.TempPathFactory, site) -> CliRun:
+    # GitHub's run variables are set so the report carries the CI-run link exactly as it does in CI.
     run = invoke_cli(tmp_path_factory.mktemp("hostile"),
                      ["scenarios/test_browser_scenarios.py", "-k", "hostile or missing_element"],
-                     config=base_config(site.url))
+                     config=base_config(site.url),
+                     env={"GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "1"})
     assert run.run_dir is not None, run.output
     return run
 
@@ -38,10 +40,12 @@ def test_hostile_test_names_and_messages_are_escaped(hostile_run: CliRun, report
 
 def test_summary_report_loads_nothing_from_the_internet(hostile_run: CliRun) -> None:
     html = (hostile_run.run_dir / "summary.html").read_text(encoding="utf-8")
-    sources = re.findall(r'(?:src|href)="([^"]+)"', html)
-    external = [s for s in sources if not s.startswith(("data:", "#"))]
-    assert set(external) <= {"https://trace.playwright.dev"}, external
-    assert "<script" not in html.lower() and "<link" not in html.lower()
+    # Only what a browser fetches by itself counts (src=, stylesheets, scripts). Clickable links such as the
+    # CI run, trace.playwright.dev or "How to fix" pages load nothing until the reader chooses to follow them.
+    loaded = [s for s in re.findall(r'\bsrc="([^"]+)"', html) if not s.startswith("data:")]
+    assert loaded == [], loaded
+    assert "<script" not in html.lower() and "<link" not in html.lower() and "@import" not in html
+    assert "url(" not in html.split("</style>")[0].split("<style>")[-1], "no external CSS resources"
 
 
 def test_hostile_ai_text_is_escaped(tmp_path: Path) -> None:

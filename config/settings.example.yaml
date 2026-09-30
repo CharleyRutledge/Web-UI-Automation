@@ -21,6 +21,25 @@ ai:
   model: claude-sonnet-5-5
   max_tokens: 2048
 
+# Accessibility of the site under test (axe-core, in the real browser).
+# WCAG 2.1 AA is what EN 301 549 requires (EU Web Accessibility Directive, European Accessibility Act);
+# wcag22aa adds the WCAG 2.2 criteria. fail_on: minor | moderate | serious | critical | none
+accessibility:
+  enabled: true
+  standard: wcag21aa
+  fail_on: serious
+  pages:
+    - /
+    - /docs/intro
+
+# Irish / EU website requirements: privacy notice, cookie consent (no tracking before consent),
+# accessibility statement, company details, contact details, terms. Off unless the site is yours.
+compliance:
+  enabled: false
+  pages:
+    - /
+  checks: [privacy_notice, cookie_consent, accessibility_statement, company_details, contact_details]
+
 notifications:
   email:
     enabled: true
