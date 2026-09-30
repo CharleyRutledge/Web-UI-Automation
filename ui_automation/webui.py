@@ -8,14 +8,14 @@ Optional extra — requires Flask (see requirements-ui.txt). Launch with:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-REPORTS_DIRNAME = "reports"
-
+from ui_automation.config import reports_root
 
 @dataclass
 class RunRow:
@@ -34,40 +34,64 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def _list_runs(reports_dir: Path) -> list[RunRow]:
-    if not reports_dir.is_dir():
-        return []
+PAGE_SIZE = 200
 
-    rows: list[RunRow] = []
-    for entry in reports_dir.iterdir():
-        if not entry.is_dir() or entry.name == "latest":
-            continue
+
+class _RunIndex:
+    """Lists run folders newest first. Only the rows shown are read, and each summary.json is parsed
+    once and cached until the file changes, so a folder with thousands of runs stays fast."""
+
+    def __init__(self, reports_dir: Path) -> None:
+        self.reports_dir = reports_dir
+        self._cache: dict[str, tuple[float, RunRow]] = {}
+        self._lock = threading.Lock()
+
+    def rows(self, limit: int | None = PAGE_SIZE) -> tuple[list[RunRow], int]:
+        if not self.reports_dir.is_dir():
+            return [], 0
+        names = sorted(
+            (e.name for e in os.scandir(self.reports_dir) if e.is_dir() and e.name != "latest"), reverse=True
+        )
+        shown = names if limit is None else names[:limit]
+        return [self._row(name) for name in shown], len(names)
+
+    def _row(self, name: str) -> RunRow:
+        entry = self.reports_dir / name
         summary_path = entry / "summary.json"
-        report_path = entry / "report.html"
-        if summary_path.is_file():
+        try:
+            mtime = summary_path.stat().st_mtime
+        except OSError:
+            mtime = -1.0
+        with self._lock:
+            cached = self._cache.get(name)
+        if cached and cached[0] == mtime and mtime != -1.0:
+            return cached[1]
+        data: object = {}
+        if mtime != -1.0:
             try:
                 data = json.loads(summary_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 data = {}
-            if not isinstance(data, dict):
-                data = {}
-        else:
+        if not isinstance(data, dict):
             data = {}
-        rows.append(
-            RunRow(
-                run_id=entry.name,
-                ok=data.get("ok"),
-                passed=data.get("passed", 0),
-                failed=data.get("failed", 0),
-                skipped=data.get("skipped", 0),
-                errors=data.get("errors", 0),
-                generated_at=data.get("generated_at"),
-                has_report=report_path.is_file(),
-                has_summary=(entry / "summary.html").is_file(),
-            )
+        row = RunRow(
+            run_id=name,
+            ok=data.get("ok"),
+            passed=data.get("passed", 0),
+            failed=data.get("failed", 0),
+            skipped=data.get("skipped", 0),
+            errors=data.get("errors", 0),
+            generated_at=data.get("generated_at"),
+            has_report=(entry / "report.html").is_file(),
+            has_summary=(entry / "summary.html").is_file(),
         )
-    rows.sort(key=lambda r: r.run_id, reverse=True)
-    return rows
+        with self._lock:
+            self._cache[name] = (mtime, row)
+        return row
+
+
+def _list_runs(reports_dir: Path) -> list[RunRow]:
+    return _RunIndex(reports_dir).rows(limit=None)[0]
 
 
 _PAGE = """
@@ -149,6 +173,9 @@ _PAGE = """
       {% endfor %}
       </tbody>
     </table>
+    {% if total > runs|length %}
+      <p class="empty">Showing the newest {{ runs|length }} of {{ total }} runs. <a class="report-link" href="/?all=1">Show all</a></p>
+    {% endif %}
   </div>
 </main>
 </body>
@@ -156,19 +183,40 @@ _PAGE = """
 """
 
 
-def create_app():
-    from flask import Flask, abort, redirect, render_template_string, request, send_from_directory, url_for
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
+
+
+def create_app(
+    reports_dir: Path | None = None,
+    *,
+    allowed_hosts: frozenset[str] | None = None,
+    run_timeout: float = 600,
+):
+    from flask import Flask, abort, redirect, request, send_from_directory, url_for
 
     root = _project_root()
-    reports_dir = root / REPORTS_DIRNAME
+    reports_dir = (reports_dir or reports_root(root)).resolve()
+    hosts = _LOCAL_HOSTS | (allowed_hosts or frozenset())
 
     app = Flask(__name__)
     run_lock = threading.Lock()
+    index_ = _RunIndex(reports_dir)
+    page = app.jinja_env.from_string(_PAGE)  # compiled once, not on every request
+
+    @app.before_request
+    def only_expected_hosts():
+        # DNS rebinding: a malicious site can point its own domain at 127.0.0.1 and then read or
+        # drive this dashboard as a "same-origin" page. Its requests carry its domain in Host.
+        host = request.host.rsplit(":", 1)[0] if not request.host.startswith("[") else request.host.split("]")[0] + "]"
+        if host.lower() not in hosts:
+            abort(403)
 
     @app.get("/")
     def index():
         message = request.args.get("message")
-        return render_template_string(_PAGE, runs=_list_runs(reports_dir), message=message)
+        show_all = request.args.get("all") == "1"
+        runs, total = index_.rows(limit=None if show_all else PAGE_SIZE)
+        return page.render(runs=runs, total=total, message=message)
 
     @app.post("/run")
     def trigger_run():
@@ -185,10 +233,10 @@ def create_app():
                     cwd=str(root),
                     capture_output=True,
                     text=True,
-                    timeout=600,
+                    timeout=run_timeout,
                 )
             except subprocess.TimeoutExpired:
-                message = "Run timed out after 600s and was stopped."
+                message = f"Run timed out after {run_timeout:.0f}s and was stopped."
             else:
                 tail = "\n".join(result.stdout.strip().splitlines()[-6:])
                 message = f"Run finished (exit {result.returncode}).\n{tail}"
@@ -198,6 +246,10 @@ def create_app():
 
     @app.get("/reports/<path:filename>")
     def serve_report(filename: str):
+        # send_from_directory blocks "../" but follows symlinks; refuse anything that resolves outside.
+        target = (reports_dir / filename).resolve()
+        if not target.is_relative_to(reports_dir):
+            abort(404)
         return send_from_directory(reports_dir, filename)
 
     return app
@@ -205,7 +257,7 @@ def create_app():
 
 def run_dashboard(host: str = "127.0.0.1", port: int = 8501) -> None:
     try:
-        app = create_app()
+        app = create_app(allowed_hosts=frozenset({host.lower()}))
     except ImportError as exc:
         raise SystemExit(
             "The dashboard needs Flask. Install it with:\n"

@@ -22,8 +22,7 @@ def build_analysis_prompt(summary: RunSummary) -> str:
         f"- Site under test: {summary.base_url or 'unknown'}",
         f"- Result: {summary.passed} passed, {summary.failed} failed, "
         f"{summary.errors} errors, {summary.skipped} skipped",
-        "- Browser tests use Playwright (pytest-playwright, Chromium). Tests under tests/unit/ "
-        "are plain Python tests with no browser.",
+        "- Tests use Playwright (pytest-playwright, Chromium).",
         "",
         "All tests:",
     ]
@@ -57,7 +56,8 @@ def analyze_run(summary: RunSummary, ai: AiSettings) -> str | None:
     except ImportError:
         return None
 
-    client = Anthropic(api_key=api_key)
+    # ANTHROPIC_BASE_URL (read by the SDK) can point this at another endpoint.
+    client = Anthropic(api_key=api_key, timeout=ai.timeout_seconds, max_retries=2)
     message = client.beta.messages.create(
         model=ai.model,
         max_tokens=ai.max_tokens,

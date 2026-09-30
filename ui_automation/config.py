@@ -28,6 +28,7 @@ class AiSettings:
     enabled: bool = False
     model: str = "claude-sonnet-5-5"
     max_tokens: int = 2048
+    timeout_seconds: float = 60.0
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,8 @@ class EmailSettings:
     use_tls: bool = True
     from_addr: str = ""
     to_addrs: tuple[str, ...] = ()
+    use_ssl: bool | None = None  # implicit TLS (SMTPS); None = only on port 465
+    timeout_seconds: float = 30.0
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,7 @@ class TelegramSettings:
     enabled: bool = False
     bot_token: str = ""
     chat_id: str = ""
+    timeout_seconds: float = 60.0
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,18 @@ def _as_bool(value: Any, default: bool = False, name: str = "value") -> bool:
     raise ValueError(f"settings.yaml: {name} must be a boolean, got {value!r}")
 
 
+def _as_seconds(value: Any, default: float, name: str) -> float:
+    if value is None:
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"settings.yaml: {name} must be a number of seconds, got {value!r}") from None
+    if not number > 0:
+        raise ValueError(f"settings.yaml: {name} must be > 0, got {number}")
+    return number
+
+
 def _as_int(value: Any, default: int, name: str, *, minimum: int = 0) -> int:
     if value is None:
         return default
@@ -146,6 +162,8 @@ def _load_email(raw: Mapping[str, Any] | None) -> EmailSettings:
         use_tls=_as_bool(raw.get("use_tls"), True, "notifications.email.use_tls"),
         from_addr=str(raw.get("from_addr", "") or raw.get("from", "")),
         to_addrs=to_addrs,
+        use_ssl=None if raw.get("use_ssl") is None else _as_bool(raw["use_ssl"], False, "notifications.email.use_ssl"),
+        timeout_seconds=_as_seconds(raw.get("timeout_seconds"), 30.0, "notifications.email.timeout_seconds"),
     )
 
 
@@ -155,6 +173,7 @@ def _load_telegram(raw: Mapping[str, Any] | None) -> TelegramSettings:
         enabled=_as_bool(raw.get("enabled"), False, "notifications.telegram.enabled"),
         bot_token=str(raw.get("bot_token", "") or os.environ.get("TELEGRAM_BOT_TOKEN", "")),
         chat_id=str(raw.get("chat_id", "") or os.environ.get("TELEGRAM_CHAT_ID", "")),
+        timeout_seconds=_as_seconds(raw.get("timeout_seconds"), 60.0, "notifications.telegram.timeout_seconds"),
     )
 
 
@@ -190,6 +209,7 @@ def _load_ai(raw: Mapping[str, Any] | None) -> AiSettings:
         enabled=enabled,
         model=str(raw.get("model", "claude-sonnet-5-5")),
         max_tokens=_as_int(raw.get("max_tokens"), 2048, "ai.max_tokens", minimum=1),
+        timeout_seconds=_as_seconds(raw.get("timeout_seconds"), 60.0, "ai.timeout_seconds"),
     )
 
 
@@ -199,13 +219,17 @@ def load_settings(path: str | Path | None = None) -> Settings:
         or os.environ.get("WEB_UI_CONFIG")
         or Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
     )
-    raw = resolve_env(yaml.safe_load(cfg_path.read_text(encoding="utf-8")))
+    try:
+        parsed = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{cfg_path}: not valid YAML ({exc})".replace("\n", " ")) from None
+    raw = resolve_env(parsed)
     m = _as_mapping(raw)
 
     base_url = str(m.get("base_url") or "").strip().rstrip("/")
     if not base_url:
         raise ValueError("settings.yaml: base_url is required")
-    if not re.match(r"^https?://[^/\s]+", base_url):
+    if not re.match(r"^https?://[^/\s]+", base_url, re.IGNORECASE):
         raise ValueError(f"settings.yaml: base_url must start with http:// or https://, got {base_url!r}")
 
     browser = str(m.get("browser", "chromium")).lower()
@@ -232,3 +256,9 @@ def load_settings(path: str | Path | None = None) -> Settings:
             telegram=_load_telegram(_section(notif_raw, "telegram")),
         ),
     )
+
+
+def reports_root(project_root: Path) -> Path:
+    """Where run folders live: WEB_UI_REPORTS_DIR if set, else <project>/reports."""
+    override = os.environ.get("WEB_UI_REPORTS_DIR", "").strip()
+    return Path(override).expanduser().resolve() if override else project_root / "reports"

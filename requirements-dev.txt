@@ -1,0 +1,5 @@
+# Self-tests (python -m pytest -c selftests/pytest.ini selftests) and security scans
+-r requirements-ui.txt
+aiosmtpd>=1.4.6,<2
+pip-audit>=2.7,<3
+bandit>=1.7,<2

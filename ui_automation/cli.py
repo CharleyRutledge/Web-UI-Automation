@@ -9,7 +9,7 @@ import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ui_automation.config import load_settings
+from ui_automation.config import load_settings, reports_root
 
 
 def _project_root() -> Path:
@@ -31,9 +31,26 @@ def setup_project(root: Path, *, include_mcp: bool) -> int:
     return 0
 
 
-def publish_latest_report(run_dir: Path, root: Path) -> Path:
-    """Copy the run report and artifacts to reports/latest for a stable path."""
-    latest_dir = root / "reports" / "latest"
+def new_run_dir(reports_dir: Path) -> Path:
+    """A fresh run folder named after the UTC time. Two runs in the same second get _2, _3, …
+
+    mkdir(exist_ok=False) makes the choice atomic, so concurrent runs never share a folder.
+    """
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    for n in range(1, 1000):
+        candidate = reports_dir / (stamp if n == 1 else f"{stamp}_{n}")
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            continue
+        return candidate.resolve()
+    raise RuntimeError(f"Could not create a unique run folder under {reports_dir}")
+
+
+def publish_latest_report(run_dir: Path, reports_dir: Path) -> Path:
+    """Copy the run report and artifacts to <reports>/latest for a stable path."""
+    latest_dir = reports_dir / "latest"
     latest_dir.mkdir(parents=True, exist_ok=True)
     src = run_dir / "report.html"
     dst = latest_dir / "report.html"
@@ -74,6 +91,17 @@ def open_report(path: Path) -> None:
     except OSError:
         # Headless machines (servers, CI, containers) have no browser; the run itself still succeeded.
         print(f"Could not open a browser. Open the report manually: {path.resolve()}")
+
+
+def _run_pytest(cmd: list[str], root: Path) -> int:
+    """Run pytest and wait for it. Ctrl-C reaches pytest too (same terminal); it stops the tests and
+    still writes its results, so we keep waiting instead of dying with a traceback mid-report."""
+    proc = subprocess.Popen(cmd, cwd=str(root))
+    while True:
+        try:
+            return proc.wait()
+        except KeyboardInterrupt:
+            print("\nInterrupted: waiting for pytest to save the results so far...", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -144,9 +172,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Invalid configuration: {exc}", file=sys.stderr)
         return 2
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    run_dir = (root / "reports" / ts).resolve()
-    run_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir = reports_root(root)
+    try:
+        run_dir = new_run_dir(reports_dir)
+    except OSError as exc:
+        print(f"Cannot create a run folder under {reports_dir}: {exc}", file=sys.stderr)
+        return 2
     playwright_output = run_dir / "playwright-output"
 
     os.environ["WEB_UI_RUN_DIR"] = str(run_dir)
@@ -175,14 +206,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Playwright output: {playwright_output}")
     print(f"Video mode: {settings.video_mode}")
 
-    exit_code = subprocess.call(cmd, cwd=str(root))
+    exit_code = _run_pytest(cmd, root)
 
     # pytest has exited, so report.html and summary.json are complete: now analyse and notify.
     from ui_automation.reporting.pipeline import notify_run
 
     notify_run(run_dir, settings)
 
-    latest_report = publish_latest_report(run_dir, root)
+    latest_report = publish_latest_report(run_dir, reports_dir)
     print(f"Latest report copy: {latest_report}")
 
     if args.open and latest_report.is_file():

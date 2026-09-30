@@ -7,6 +7,10 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# Least privilege: the jobs only read the repository. Secrets are never exposed to pull requests from forks.
+permissions:
+  contents: read
+
 jobs:
   playwright:
     runs-on: ubuntu-latest
@@ -16,9 +20,9 @@ jobs:
     steps:
       # v7 actions run on Node 24; the v4/v5 ones ran on deprecated Node 20 and printed the
       # "punycode module is deprecated" warnings.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -42,7 +46,7 @@ jobs:
       # reports/latest is a copy of the run folder, so it is excluded to avoid uploading everything twice.
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-report
           path: |
@@ -55,7 +59,7 @@ jobs:
 
       - name: Upload videos
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-videos
           path: |
@@ -65,7 +69,7 @@ jobs:
 
       - name: Upload screenshots
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-screenshots
           path: |
@@ -77,10 +81,53 @@ jobs:
       # Traces are kept for failed tests only (artifacts.tracing: retain-on-failure), so a green run has none.
       - name: Upload traces
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-traces
           path: |
             reports/*/traces/**
             !reports/latest/**
           if-no-files-found: ignore
+
+  selftests:
+    # The framework's own tests: config, CLI, browser failure modes, email/Telegram/Claude error paths,
+    # dashboard and security. Everything talks to real local servers; no real secrets are used.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Run self-tests
+        run: python -m pytest -c selftests/pytest.ini selftests -p no:cacheprovider
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install scanners
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Known vulnerabilities in dependencies (pip-audit)
+        run: pip-audit -r requirements-ui.txt --progress-spinner off
+
+      - name: Insecure code patterns, medium severity and above (bandit)
+        run: bandit -q -ll -r ui_automation pages conftest.py

@@ -56,13 +56,20 @@ def send_run_email(
     # smtplib does not verify server certificates unless given a context; without this the SMTP
     # password can be intercepted by anyone able to sit between us and the mail server.
     tls_context = ssl.create_default_context()
-    if email.smtp_port == 465:
-        smtp_cm = smtplib.SMTP_SSL(email.smtp_host, email.smtp_port, timeout=30, context=tls_context)
+    implicit_tls = email.use_ssl if email.use_ssl is not None else email.smtp_port == 465
+    if implicit_tls:
+        smtp_cm = smtplib.SMTP_SSL(
+            email.smtp_host, email.smtp_port, timeout=email.timeout_seconds, context=tls_context
+        )
     else:
-        smtp_cm = smtplib.SMTP(email.smtp_host, email.smtp_port, timeout=30)
+        smtp_cm = smtplib.SMTP(email.smtp_host, email.smtp_port, timeout=email.timeout_seconds)
     with smtp_cm as server:
-        if email.use_tls and email.smtp_port != 465:
+        if email.use_tls and not implicit_tls:
             server.starttls(context=tls_context)
         if email.smtp_user:
             server.login(email.smtp_user, email.smtp_password)
-        server.sendmail(email.from_addr, list(email.to_addrs), msg.as_string())
+        refused = server.sendmail(email.from_addr, list(email.to_addrs), msg.as_string())
+    if refused:
+        # sendmail only raises when every recipient is refused; otherwise it returns the ones it dropped.
+        who = ", ".join(f"{addr} ({code} {reply.decode(errors='replace')})" for addr, (code, reply) in refused.items())
+        print(f"Email not delivered to: {who}")

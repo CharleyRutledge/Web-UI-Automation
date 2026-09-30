@@ -8,6 +8,7 @@ from typing import Any
 
 @dataclass
 class TestResult:
+    __test__ = False  # a data class, not a pytest test class
     nodeid: str
     outcome: str  # passed | failed | skipped | error
     duration: float = 0.0

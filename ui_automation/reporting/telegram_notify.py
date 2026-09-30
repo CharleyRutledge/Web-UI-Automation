@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -14,19 +15,26 @@ def _is_unresolved(value: str) -> bool:
     return "${" in value
 
 
+def _api_base() -> str:
+    # Overridable so the error paths (401, 429, 500, timeouts) can be tested against a local server.
+    return os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
+
+
 def _call(
     token: str,
     method: str,
     payload: dict[str, Any],
     files: dict[str, tuple[str, bytes, str]] | None = None,
+    *,
+    timeout: float = 60.0,
 ) -> dict[str, Any]:
     """POST to the Bot API. The URL embeds the bot token, so it must never reach an error message."""
-    url = f"https://api.telegram.org/bot{token}/{method}"
+    url = f"{_api_base()}/bot{token}/{method}"
     try:
         if files:
-            response = requests.post(url, data=payload, files=files, timeout=60)
+            response = requests.post(url, data=payload, files=files, timeout=timeout)
         else:
-            response = requests.post(url, json=payload, timeout=30)
+            response = requests.post(url, json=payload, timeout=timeout)
     except requests.RequestException as exc:
         raise RuntimeError(f"Telegram {method} request failed ({type(exc).__name__})") from None
     if not response.ok:
@@ -59,9 +67,11 @@ def build_caption(summary: RunSummary) -> str:
     return caption if len(caption) <= _CAPTION_LIMIT else caption[: _CAPTION_LIMIT - 1] + "…"
 
 
-def discover_chat_id(token: str) -> str | None:
+def discover_chat_id(token: str, *, timeout: float = 60.0) -> str | None:
     """Find the chat of the most recent message sent to the bot (personal-bot convenience)."""
-    data = _call(token, "getUpdates", {"limit": 100, "allowed_updates": ["message", "channel_post"]})
+    data = _call(
+        token, "getUpdates", {"limit": 100, "allowed_updates": ["message", "channel_post"]}, timeout=timeout
+    )
     for update in reversed(data.get("result") or []):
         message = update.get("message") or update.get("channel_post") or {}
         chat_id = (message.get("chat") or {}).get("id")
@@ -86,7 +96,7 @@ def send_run_telegram(
 
     chat_id = "" if _is_unresolved(telegram.chat_id) else telegram.chat_id
     if not chat_id:
-        chat_id = discover_chat_id(telegram.bot_token) or ""
+        chat_id = discover_chat_id(telegram.bot_token, timeout=telegram.timeout_seconds) or ""
         if not chat_id:
             print(
                 "Telegram notification skipped: no chat_id set and the bot has no messages yet "
@@ -107,6 +117,9 @@ def send_run_telegram(
             "sendDocument",
             {"chat_id": chat_id, "caption": caption},
             files={"document": (name, attachment.read_bytes(), "text/html")},
+            timeout=telegram.timeout_seconds,
         )
     else:
-        _call(telegram.bot_token, "sendMessage", {"chat_id": chat_id, "text": caption})
+        _call(
+            telegram.bot_token, "sendMessage", {"chat_id": chat_id, "text": caption}, timeout=telegram.timeout_seconds
+        )

@@ -30,6 +30,33 @@ python -m ui_automation --open
 Invoke-Item .\reports\latest\report.html
 ```
 
+## Testing the framework itself
+
+The framework has its own test suite in `selftests/` (separate from the UI tests in `tests/`). Every test
+talks to real local servers over real sockets: a scenario website, SMTP servers (plain, STARTTLS, implicit
+TLS, login), and local stand-ins for the Telegram and Anthropic APIs, used for the error paths
+(401/429/500, timeouts, broken replies) the real services cannot produce on demand.
+
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m pytest -c selftests/pytest.ini selftests            # every push in CI (~2 min)
+python -m pytest -c selftests/pytest.ini selftests -m load -s # nightly: load / performance numbers
+python -m pytest -c selftests/pytest.ini selftests -m live    # weekly: real Claude + Telegram (needs secrets)
+```
+
+| Area | What is covered |
+|------|-----------------|
+| Config | every setting: valid, boundary, wrong type, missing, `${ENV}` values, broken YAML |
+| Browser | pass, missing element, slow page, HTTP 500, redirect loop, offline, DNS failure, bad TLS certificate, throttled network, fixture error, skip, xfail, and the artifacts each leaves |
+| CLI | exit codes, test selection, no tests, bad/missing config, Ctrl-C, same-second runs, unwritable reports folder, no `ffmpeg`, `--open` without a browser |
+| Email | plain, STARTTLS, implicit TLS, untrusted certificates, login ok/wrong/missing, rejected recipients, server down, slow server, large report |
+| Telegram | document + caption, chat discovery, 400/401/429/500/502, broken JSON, timeout, connection refused, caption limit, token never leaked |
+| Claude | request contents, no call on green runs, 400/401/404, 429 retry, 500/529 give-up, refusal, timeout, prompt size cap, failures never break the run |
+| Security | report escaping (test names, messages, AI text, media paths), dashboard XSS, path traversal and symlink escape, CSRF, DNS rebinding, loopback-only binding, secret scan of all output and artifacts, `pip-audit`, `bandit` |
+| Load | dashboard with 2,000 runs under 16 concurrent clients, 5 MB report downloads, a 500-test run, concurrent CLI runs, report size budget |
+
+The `CLI` also honours `WEB_UI_REPORTS_DIR` (where run folders go) and `TELEGRAM_API_BASE` (Bot API address).
+
 ## Dashboard (optional local UI)
 
 Browse past runs and trigger new ones from a small local web page instead of the CLI:
