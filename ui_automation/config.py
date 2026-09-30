@@ -26,7 +26,7 @@ class ArtifactSettings:
 @dataclass(frozen=True)
 class AiSettings:
     enabled: bool = False
-    model: str = "claude-sonnet-5"
+    model: str = "claude-sonnet-5-5"
     max_tokens: int = 2048
 
 
@@ -188,7 +188,7 @@ def _load_ai(raw: Mapping[str, Any] | None) -> AiSettings:
         enabled = bool(os.environ.get("ANTHROPIC_API_KEY"))
     return AiSettings(
         enabled=enabled,
-        model=str(raw.get("model", "claude-sonnet-5")),
+        model=str(raw.get("model", "claude-sonnet-5-5")),
         max_tokens=_as_int(raw.get("max_tokens"), 2048, "ai.max_tokens", minimum=1),
     )
 

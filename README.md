@@ -1,6 +1,6 @@
 # Web UI Automation
 
-Playwright + Python + pytest suite following [Playwright testing practices](https://playwright.dev/docs/best-practices): semantic locators, web-first `expect()` assertions, Page Object Model, YAML config, pipeline video capture, and optional **Claude Sonnet 5** summaries with **email** and **Telegram** notifications.
+Playwright + Python + pytest suite following [Playwright testing practices](https://playwright.dev/docs/best-practices): semantic locators, web-first `expect()` assertions, Page Object Model, YAML config, pipeline video capture, and optional **Claude Sonnet 5.5** summaries with **email** and **Telegram** notifications.
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/charleyrutledge)
 
@@ -63,9 +63,9 @@ The CLI passes `--video` and stores output under `reports/<timestamp>/playwright
 
 In **GitHub Actions** (`CI=true`), video is always forced to `on`. Workflow uploads `reports/**/videos/**/*.webm` as artifacts.
 
-## Claude Sonnet 5 (AI)
+## Claude Sonnet 5.5 (AI)
 
-Uses the Anthropic API with model **`claude-sonnet-5`**.
+Uses the Anthropic API with model **`claude-sonnet-5-5`**.
 
 1. Set `ANTHROPIC_API_KEY`.
 2. In `config/settings.yaml`:
@@ -73,7 +73,7 @@ Uses the Anthropic API with model **`claude-sonnet-5`**.
 ```yaml
 ai:
   enabled: true
-  model: claude-sonnet-5
+  model: claude-sonnet-5-5
   max_tokens: 2048
 ```
 

@@ -19,10 +19,10 @@ artifacts:
   tracing: retain-on-failure
   navigation_wait_until: domcontentloaded
 
-# Claude Sonnet 5 — set ANTHROPIC_API_KEY and enabled: true
+# Claude Sonnet 5.5 — set ANTHROPIC_API_KEY and enabled: true
 ai:
   enabled: false
-  model: claude-sonnet-5
+  model: claude-sonnet-5-5
   max_tokens: 2048
 
 notifications:
