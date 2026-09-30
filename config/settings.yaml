@@ -21,7 +21,7 @@ artifacts:
 
 # Claude Sonnet 5.5 — set ANTHROPIC_API_KEY and enabled: true
 ai:
-  enabled: false
+  enabled: true
   model: claude-sonnet-5-5
   max_tokens: 2048
 
