@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,7 +46,9 @@ def _list_runs(reports_dir: Path) -> list[RunRow]:
         if summary_path.is_file():
             try:
                 data = json.loads(summary_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except (OSError, ValueError):
+                data = {}
+            if not isinstance(data, dict):
                 data = {}
         else:
             data = {}
@@ -151,12 +154,13 @@ _PAGE = """
 
 
 def create_app():
-    from flask import Flask, redirect, render_template_string, request, send_from_directory, url_for
+    from flask import Flask, abort, redirect, render_template_string, request, send_from_directory, url_for
 
     root = _project_root()
     reports_dir = root / REPORTS_DIRNAME
 
     app = Flask(__name__)
+    run_lock = threading.Lock()
 
     @app.get("/")
     def index():
@@ -165,15 +169,28 @@ def create_app():
 
     @app.post("/run")
     def trigger_run():
-        result = subprocess.run(
-            [sys.executable, "-m", "ui_automation"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        tail = "\n".join(result.stdout.strip().splitlines()[-6:])
-        message = f"Run finished (exit {result.returncode}).\n{tail}"
+        # Reject cross-site form posts: any web page could otherwise trigger a test run on localhost.
+        origin = request.headers.get("Origin")
+        if origin and origin.rstrip("/") != request.host_url.rstrip("/"):
+            abort(403)
+        if not run_lock.acquire(blocking=False):
+            return redirect(url_for("index", message="A run is already in progress."))
+        try:
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "ui_automation"],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+            except subprocess.TimeoutExpired:
+                message = "Run timed out after 600s and was stopped."
+            else:
+                tail = "\n".join(result.stdout.strip().splitlines()[-6:])
+                message = f"Run finished (exit {result.returncode}).\n{tail}"
+        finally:
+            run_lock.release()
         return redirect(url_for("index", message=message))
 
     @app.get("/reports/<path:filename>")

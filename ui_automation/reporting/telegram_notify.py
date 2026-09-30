@@ -36,9 +36,14 @@ def send_run_telegram(
 
     text = "\n".join(line for line in lines if line)
     url = f"https://api.telegram.org/bot{telegram.bot_token}/sendMessage"
-    response = requests.post(
-        url,
-        json={"chat_id": telegram.chat_id, "text": text},
-        timeout=30,
-    )
-    response.raise_for_status()
+    try:
+        response = requests.post(
+            url,
+            json={"chat_id": telegram.chat_id, "text": text},
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        # The request URL embeds the bot token; never let it reach logs via the exception text.
+        raise RuntimeError(f"Telegram request failed ({type(exc).__name__})") from None
+    if not response.ok:
+        raise RuntimeError(f"Telegram API returned HTTP {response.status_code}")

@@ -27,5 +27,5 @@ class RunSummary:
     def short_status(self) -> str:
         return (
             f"{'PASSED' if self.ok else 'FAILED'} — "
-            f"{self.passed} passed, {self.failed} failed, {self.skipped} skipped"
+            f"{self.passed} passed, {self.failed} failed, {self.skipped} skipped, {self.errors} errors"
         )

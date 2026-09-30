@@ -39,22 +39,24 @@ def publish_latest_report(run_dir: Path, root: Path) -> Path:
     dst = latest_dir / "report.html"
     if src.is_file():
         shutil.copy2(src, dst)
+    elif dst.exists():
+        dst.unlink()
 
     for folder in ("screenshots", "videos", "traces"):
         src_dir = run_dir / folder
         dst_dir = latest_dir / folder
+        if dst_dir.exists():
+            shutil.rmtree(dst_dir)  # never leave artifacts from an older run in "latest"
         if src_dir.is_dir():
-            if dst_dir.exists():
-                shutil.rmtree(dst_dir)
             shutil.copytree(src_dir, dst_dir)
 
-    claude_src = run_dir / "claude_summary.txt"
-    if claude_src.is_file():
-        shutil.copy2(claude_src, latest_dir / "claude_summary.txt")
-
-    summary_src = run_dir / "summary.json"
-    if summary_src.is_file():
-        shutil.copy2(summary_src, latest_dir / "summary.json")
+    for name in ("claude_summary.txt", "summary.json"):
+        file_src = run_dir / name
+        file_dst = latest_dir / name
+        if file_src.is_file():
+            shutil.copy2(file_src, file_dst)
+        elif file_dst.exists():
+            file_dst.unlink()
 
     return dst
 
@@ -128,7 +130,14 @@ def main(argv: list[str] | None = None) -> int:
     if pytest_args and pytest_args[0] == "--":
         pytest_args = pytest_args[1:]
 
-    settings = load_settings(args.config)
+    if args.config:
+        # The tests run with cwd=root, so a config path relative to the caller's cwd must be absolutized.
+        args.config = str(Path(args.config).expanduser().resolve())
+    try:
+        settings = load_settings(args.config)
+    except (OSError, ValueError) as exc:
+        print(f"Invalid configuration: {exc}", file=sys.stderr)
+        return 2
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_dir = (root / "reports" / ts).resolve()
@@ -136,8 +145,6 @@ def main(argv: list[str] | None = None) -> int:
     playwright_output = run_dir / "playwright-output"
 
     os.environ["WEB_UI_RUN_DIR"] = str(run_dir)
-    if os.environ.get("CI"):
-        os.environ.setdefault("CI", "true")
 
     html_report = run_dir / "report.html"
     report_css = root / "ui_automation" / "reporting" / "assets" / "report_theme.css"

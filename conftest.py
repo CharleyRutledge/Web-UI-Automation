@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.sync_api import BrowserContext, Playwright
+from playwright.sync_api import BrowserContext, Playwright, expect
 
 from ui_automation.config import Settings, load_settings
 from ui_automation.reporting.pipeline import finalize_run
@@ -158,6 +158,8 @@ def context(
 ) -> BrowserContext:
     ctx = new_context()
     ctx.set_default_timeout(settings.timeout_ms)
+    # expect() has its own timeout (5s default); keep it in line with timeout_ms from settings.yaml.
+    expect.set_options(timeout=settings.timeout_ms)
     return ctx
 
 

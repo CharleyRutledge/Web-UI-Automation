@@ -49,8 +49,12 @@ def send_run_email(
     msg["To"] = ", ".join(email.to_addrs)
     msg.attach(MIMEText("\n".join(body_lines), "plain", "utf-8"))
 
-    with smtplib.SMTP(email.smtp_host, email.smtp_port, timeout=30) as server:
-        if email.use_tls:
+    if email.smtp_port == 465:
+        smtp_cm = smtplib.SMTP_SSL(email.smtp_host, email.smtp_port, timeout=30)
+    else:
+        smtp_cm = smtplib.SMTP(email.smtp_host, email.smtp_port, timeout=30)
+    with smtp_cm as server:
+        if email.use_tls and email.smtp_port != 465:
             server.starttls()
         if email.smtp_user:
             server.login(email.smtp_user, email.smtp_password)
