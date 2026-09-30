@@ -197,7 +197,7 @@ def _media_card(test: TestResult, media: _Embedder, run_name: str) -> str:
     ]
     if test.videos:
         # WCAG 1.2.1: the recording has no sound, so it needs a text alternative: the steps it shows.
-        desc_id = "rec-" + hashlib.sha1(test.nodeid.encode()).hexdigest()[:10]
+        desc_id = "rec-" + hashlib.sha256(test.nodeid.encode()).hexdigest()[:12]
         shown = " → ".join(test.steps) if test.steps else "the browser while the test ran"
         player = media.video(test.videos, f"Screen recording of {test.title}", desc_id)
         parts.append(
