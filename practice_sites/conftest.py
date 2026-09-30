@@ -7,7 +7,7 @@ or the site being down / blocking automated browsers. The message in the report 
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Page
+from playwright.sync_api import Page, Response
 
 from pages.base_page import BasePage
 from ui_automation.config import Settings
@@ -27,6 +27,37 @@ SITES = {
 }
 
 
+
+def blocked_reason(response: Response | None, page: Page) -> str:
+    """Why the site refused to serve an automated browser, or '' when it did not.
+
+    Shared CI runners are often rate-limited or challenged by anti-bot services. That says nothing about
+    the site or the tests, so it is reported as a skip with the reason, never as a pass or a failure.
+    Ordinary errors (404, 500, ...) are not blocks and still fail.
+    """
+    final = page.url
+    if "google.com/sorry" in final:
+        return f"Google's 'unusual traffic' check blocked this runner ({final.split('?')[0]})"
+    if response is not None and response.status == 429:
+        return f"the site rate-limited this runner (HTTP 429 at {response.url.split('?')[0]})"
+    if response is not None and response.status in (403, 503):
+        title = page.title().lower()
+        if "just a moment" in title or "attention required" in title or "captcha" in title:
+            return f"an anti-bot challenge blocked this runner (HTTP {response.status}, page '{page.title()}')"
+    return ""
+
+
+class PracticeSite(BasePage):
+    def goto_path(self, path: str) -> Response | None:
+        self.step(f"Navigate to {path}")
+        response = self.page.goto(path, wait_until=self.settings.navigation_wait_until)  # type: ignore[arg-type]
+        reason = blocked_reason(response, self.page)
+        if reason:
+            self.step("Blocked by the site")
+            pytest.skip(f"Not tested: {reason}")
+        return response
+
+
 @pytest.fixture
-def site(page: Page, settings: Settings, request: pytest.FixtureRequest, test_artifacts_dir) -> BasePage:
-    return BasePage(page, settings, request, test_artifacts_dir)
+def site(page: Page, settings: Settings, request: pytest.FixtureRequest, test_artifacts_dir) -> PracticeSite:
+    return PracticeSite(page, settings, request, test_artifacts_dir)

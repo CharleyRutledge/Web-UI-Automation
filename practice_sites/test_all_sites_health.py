@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from pages.base_page import BasePage
-from practice_sites.conftest import SITES
+from practice_sites.conftest import SITES, PracticeSite
 
 
 @pytest.mark.parametrize("url", list(SITES.values()), ids=list(SITES))
-def test_home_page_loads_and_is_scanned(site: BasePage, url: str) -> None:
-    site.step(f"Open {url}")
-    response = site.page.goto(url, wait_until="domcontentloaded")
+def test_home_page_loads_and_is_scanned(site: PracticeSite, url: str) -> None:
+    response = site.goto_path(url)
     assert response is not None, f"{url}: no response"
     assert response.status < 400, f"{url}: HTTP {response.status}"
     site.step("Page loaded")
