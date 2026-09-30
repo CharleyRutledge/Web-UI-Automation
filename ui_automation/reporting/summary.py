@@ -37,7 +37,8 @@ class TestResult:
     @property
     def variant_tags(self) -> list[str]:
         """The parametrize id split into readable tags. pytest-playwright appends the browser with '-',
-        so 'test_x[/docs/intro-chromium]' -> ['/docs/intro', 'chromium'] and 'test_x[-chromium]' -> ['chromium']."""
+        so 'test_x[/docs/intro-chromium]' -> ['/docs/intro', 'chromium'] and 'test_x[-chromium]' -> ['chromium'];
+        with @pytest.mark.parametrize it comes first: 'test_x[chromium-saucedemo]' -> ['saucedemo', 'chromium']."""
         if "[" not in self.name:
             return []
         inside = self.name.split("[", 1)[1][:-1] if self.name.endswith("]") else self.name.split("[", 1)[1]
@@ -46,6 +47,9 @@ class TestResult:
                 return [browser]
             if inside.endswith("-" + browser):
                 param = inside[: -len(browser) - 1]
+                return ([self._readable(param)] if param else []) + [browser]
+            if inside.startswith(browser + "-"):  # @pytest.mark.parametrize puts the browser first
+                param = inside[len(browser) + 1 :]
                 return ([self._readable(param)] if param else []) + [browser]
         return [self._readable(inside)] if inside else []
 

@@ -44,6 +44,8 @@ def test_status_includes_errors():
     [
         ("test_x[-chromium]", ["chromium"]),
         ("test_x[/-chromium]", ["/", "chromium"]),
+        ("test_x[chromium-saucedemo]", ["saucedemo", "chromium"]),
+        ("test_x[chromium-wrong username]", ["wrong username", "chromium"]),
         ("test_x[/docs/intro-firefox]", ["/docs/intro", "firefox"]),
         ("test_x[webkit]", ["webkit"]),
         ("test_x[base_url_without_scheme]", ["base url without scheme"]),
