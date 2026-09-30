@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -25,8 +26,9 @@ class ArtifactSettings:
 @dataclass(frozen=True)
 class AiSettings:
     enabled: bool = False
-    model: str = "claude-sonnet-5"
+    model: str = "claude-sonnet-5-5"
     max_tokens: int = 2048
+    timeout_seconds: float = 60.0
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,8 @@ class EmailSettings:
     use_tls: bool = True
     from_addr: str = ""
     to_addrs: tuple[str, ...] = ()
+    use_ssl: bool | None = None  # implicit TLS (SMTPS); None = only on port 465
+    timeout_seconds: float = 30.0
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,26 @@ class TelegramSettings:
     enabled: bool = False
     bot_token: str = ""
     chat_id: str = ""
+    timeout_seconds: float = 60.0
+
+
+@dataclass(frozen=True)
+class AccessibilitySettings:
+    enabled: bool = True
+    standard: str = "wcag21aa"  # EN 301 549 today; "wcag22aa" adds the WCAG 2.2 criteria
+    fail_on: str = "serious"  # minor | moderate | serious | critical | none (report only)
+    pages: tuple[str, ...] = ("/",)
+
+
+DEFAULT_COMPLIANCE_CHECKS = ("privacy_notice", "cookie_consent", "accessibility_statement", "company_details",
+                             "contact_details")
+
+
+@dataclass(frozen=True)
+class ComplianceSettings:
+    enabled: bool = False
+    pages: tuple[str, ...] = ("/",)
+    checks: tuple[str, ...] = DEFAULT_COMPLIANCE_CHECKS
 
 
 @dataclass(frozen=True)
@@ -68,6 +92,8 @@ class Settings:
     artifacts: ArtifactSettings
     ai: AiSettings
     notifications: NotificationSettings
+    accessibility: AccessibilitySettings = field(default_factory=AccessibilitySettings)
+    compliance: ComplianceSettings = field(default_factory=ComplianceSettings)
 
     @property
     def video_mode(self) -> str:
@@ -82,10 +108,62 @@ class Settings:
         return self.artifacts.navigation_wait_until
 
 
-def _as_mapping(data: Any) -> Mapping[str, Any]:
+def _as_mapping(data: Any, what: str = "Config root") -> Mapping[str, Any]:
     if not isinstance(data, Mapping):
-        raise ValueError("Config root must be a mapping")
+        raise ValueError(f"{what} must be a mapping")
     return data
+
+
+def _section(raw: Mapping[str, Any] | None, key: str) -> Mapping[str, Any]:
+    """Return raw[key] as a mapping; a missing/empty section is {} and a wrong type is an error."""
+    value = (raw or {}).get(key)
+    if value is None:
+        return {}
+    return _as_mapping(value, f"settings.yaml: '{key}'")
+
+
+_TRUE = frozenset({"1", "true", "yes", "on"})
+_FALSE = frozenset({"0", "false", "no", "off", ""})
+
+
+def _as_bool(value: Any, default: bool = False, name: str = "value") -> bool:
+    """Parse booleans, including strings that come from ${ENV_VAR} substitution ("false" is False)."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in _TRUE:
+        return True
+    if text in _FALSE:
+        return False
+    raise ValueError(f"settings.yaml: {name} must be a boolean, got {value!r}")
+
+
+def _as_seconds(value: Any, default: float, name: str) -> float:
+    if value is None:
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"settings.yaml: {name} must be a number of seconds, got {value!r}") from None
+    if not number > 0:
+        raise ValueError(f"settings.yaml: {name} must be > 0, got {number}")
+    return number
+
+
+def _as_int(value: Any, default: int, name: str, *, minimum: int = 0) -> int:
+    if value is None:
+        return default
+    try:
+        number = int(str(value).strip()) if isinstance(value, str) else int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"settings.yaml: {name} must be an integer, got {value!r}") from None
+    if number < minimum:
+        raise ValueError(f"settings.yaml: {name} must be >= {minimum}, got {number}")
+    return number
 
 
 def _load_email(raw: Mapping[str, Any] | None) -> EmailSettings:
@@ -94,26 +172,29 @@ def _load_email(raw: Mapping[str, Any] | None) -> EmailSettings:
     if isinstance(to_raw, str):
         to_addrs = tuple(a.strip() for a in to_raw.split(",") if a.strip())
     else:
-        to_addrs = tuple(str(a) for a in to_raw)
+        to_addrs = tuple(str(a).strip() for a in to_raw if str(a).strip())
     password = str(raw.get("smtp_password", "") or os.environ.get("EMAIL_SMTP_PASSWORD", ""))
     return EmailSettings(
-        enabled=bool(raw.get("enabled", False)),
-        smtp_host=str(raw.get("smtp_host", "")),
-        smtp_port=int(raw.get("smtp_port", 587)),
+        enabled=_as_bool(raw.get("enabled"), False, "notifications.email.enabled"),
+        smtp_host=str(raw.get("smtp_host") or ""),
+        smtp_port=_as_int(raw.get("smtp_port"), 587, "notifications.email.smtp_port", minimum=1),
         smtp_user=str(raw.get("smtp_user", "") or os.environ.get("EMAIL_SMTP_USER", "")),
         smtp_password=password,
-        use_tls=bool(raw.get("use_tls", True)),
+        use_tls=_as_bool(raw.get("use_tls"), True, "notifications.email.use_tls"),
         from_addr=str(raw.get("from_addr", "") or raw.get("from", "")),
         to_addrs=to_addrs,
+        use_ssl=None if raw.get("use_ssl") is None else _as_bool(raw["use_ssl"], False, "notifications.email.use_ssl"),
+        timeout_seconds=_as_seconds(raw.get("timeout_seconds"), 30.0, "notifications.email.timeout_seconds"),
     )
 
 
 def _load_telegram(raw: Mapping[str, Any] | None) -> TelegramSettings:
     raw = raw or {}
     return TelegramSettings(
-        enabled=bool(raw.get("enabled", False)),
+        enabled=_as_bool(raw.get("enabled"), False, "notifications.telegram.enabled"),
         bot_token=str(raw.get("bot_token", "") or os.environ.get("TELEGRAM_BOT_TOKEN", "")),
         chat_id=str(raw.get("chat_id", "") or os.environ.get("TELEGRAM_CHAT_ID", "")),
+        timeout_seconds=_as_seconds(raw.get("timeout_seconds"), 60.0, "notifications.telegram.timeout_seconds"),
     )
 
 
@@ -139,16 +220,66 @@ def _load_artifacts(raw: Mapping[str, Any] | None) -> ArtifactSettings:
     return ArtifactSettings(video=video, tracing=tracing, navigation_wait_until=wait)
 
 
+_A11Y_STANDARDS = ("wcag21aa", "wcag22aa")
+_A11Y_FAIL_ON = ("minor", "moderate", "serious", "critical", "none")
+
+
+def _pages(raw: Any, name: str) -> tuple[str, ...]:
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)) or not raw or not all(isinstance(p, str) and p.strip() for p in raw):
+        raise ValueError(f"settings.yaml: {name} must be a list of paths like '/' or '/contact'")
+    return tuple(p.strip() if p.strip().startswith(("/", "http://", "https://")) else "/" + p.strip() for p in raw)
+
+
+def _load_compliance(raw: Mapping[str, Any] | None) -> ComplianceSettings:
+    from ui_automation.compliance import ALL_CHECKS
+
+    raw = raw or {}
+    checks_raw = raw.get("checks", list(DEFAULT_COMPLIANCE_CHECKS))
+    if isinstance(checks_raw, str):
+        checks_raw = [checks_raw]
+    if not isinstance(checks_raw, (list, tuple)) or not checks_raw:
+        raise ValueError("settings.yaml: compliance.checks must be a list")
+    checks = tuple(str(c).strip().lower() for c in checks_raw)
+    unknown = [c for c in checks if c not in ALL_CHECKS]
+    if unknown:
+        raise ValueError(f"settings.yaml: compliance.checks has unknown {unknown}; choose from {list(ALL_CHECKS)}")
+    return ComplianceSettings(
+        enabled=_as_bool(raw.get("enabled"), False, "compliance.enabled"),
+        pages=_pages(raw.get("pages", ["/"]), "compliance.pages"),
+        checks=checks,
+    )
+
+
+def _load_accessibility(raw: Mapping[str, Any] | None) -> AccessibilitySettings:
+    raw = raw or {}
+    standard = str(raw.get("standard") or "wcag21aa").lower()
+    if standard not in _A11Y_STANDARDS:
+        raise ValueError(f"settings.yaml: accessibility.standard must be one of {_A11Y_STANDARDS}")
+    fail_on = str(raw.get("fail_on") or "serious").lower()
+    if fail_on not in _A11Y_FAIL_ON:
+        raise ValueError(f"settings.yaml: accessibility.fail_on must be one of {_A11Y_FAIL_ON}")
+    pages = _pages(raw.get("pages", ["/"]), "accessibility.pages")
+    return AccessibilitySettings(
+        enabled=_as_bool(raw.get("enabled"), True, "accessibility.enabled"),
+        standard=standard,
+        fail_on=fail_on,
+        pages=pages,
+    )
+
+
 def _load_ai(raw: Mapping[str, Any] | None) -> AiSettings:
     raw = raw or {}
-    if "enabled" in raw:
-        enabled = bool(raw["enabled"])
+    if raw.get("enabled") is not None:
+        enabled = _as_bool(raw["enabled"], False, "ai.enabled")
     else:
         enabled = bool(os.environ.get("ANTHROPIC_API_KEY"))
     return AiSettings(
         enabled=enabled,
-        model=str(raw.get("model", "claude-sonnet-5")),
-        max_tokens=int(raw.get("max_tokens", 2048)),
+        model=str(raw.get("model", "claude-sonnet-5-5")),
+        max_tokens=_as_int(raw.get("max_tokens"), 2048, "ai.max_tokens", minimum=1),
+        timeout_seconds=_as_seconds(raw.get("timeout_seconds"), 60.0, "ai.timeout_seconds"),
     )
 
 
@@ -158,34 +289,48 @@ def load_settings(path: str | Path | None = None) -> Settings:
         or os.environ.get("WEB_UI_CONFIG")
         or Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
     )
-    raw = resolve_env(yaml.safe_load(cfg_path.read_text(encoding="utf-8")))
+    try:
+        parsed = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{cfg_path}: not valid YAML ({exc})".replace("\n", " ")) from None
+    raw = resolve_env(parsed)
     m = _as_mapping(raw)
 
-    base_url = str(m.get("base_url", "")).rstrip("/")
+    base_url = str(m.get("base_url") or "").strip().rstrip("/")
     if not base_url:
         raise ValueError("settings.yaml: base_url is required")
+    if not re.match(r"^https?://[^/\s]+", base_url, re.IGNORECASE):
+        raise ValueError(f"settings.yaml: base_url must start with http:// or https://, got {base_url!r}")
 
     browser = str(m.get("browser", "chromium")).lower()
     if browser not in _VALID_BROWSERS:
         raise ValueError(f"settings.yaml: browser must be one of {_VALID_BROWSERS}")
 
-    vp = m.get("viewport") or {}
-    notif_raw = m.get("notifications") or {}
+    vp = _section(m, "viewport")
+    notif_raw = _section(m, "notifications")
 
     return Settings(
         base_url=base_url,
         browser=browser,
-        headless=bool(m.get("headless", True)),
-        timeout_ms=int(m.get("timeout_ms", 30_000)),
-        slow_mo_ms=int(m.get("slow_mo_ms", 0)),
-        viewport_width=int(vp.get("width", 1280)),
-        viewport_height=int(vp.get("height", 720)),
-        strict_selectors=bool(m.get("strict_selectors", True)),
-        screenshot_full_page=bool(m.get("screenshot_full_page", True)),
-        artifacts=_load_artifacts(m.get("artifacts")),
-        ai=_load_ai(m.get("ai")),
+        headless=_as_bool(m.get("headless"), True, "headless"),
+        timeout_ms=_as_int(m.get("timeout_ms"), 30_000, "timeout_ms", minimum=1),
+        slow_mo_ms=_as_int(m.get("slow_mo_ms"), 0, "slow_mo_ms"),
+        viewport_width=_as_int(vp.get("width"), 1280, "viewport.width", minimum=1),
+        viewport_height=_as_int(vp.get("height"), 720, "viewport.height", minimum=1),
+        strict_selectors=_as_bool(m.get("strict_selectors"), True, "strict_selectors"),
+        screenshot_full_page=_as_bool(m.get("screenshot_full_page"), True, "screenshot_full_page"),
+        artifacts=_load_artifacts(_section(m, "artifacts")),
+        ai=_load_ai(_section(m, "ai")),
+        accessibility=_load_accessibility(_section(m, "accessibility")),
+        compliance=_load_compliance(_section(m, "compliance")),
         notifications=NotificationSettings(
-            email=_load_email(notif_raw.get("email")),
-            telegram=_load_telegram(notif_raw.get("telegram")),
+            email=_load_email(_section(notif_raw, "email")),
+            telegram=_load_telegram(_section(notif_raw, "telegram")),
         ),
     )
+
+
+def reports_root(project_root: Path) -> Path:
+    """Where run folders live: WEB_UI_REPORTS_DIR if set, else <project>/reports."""
+    override = os.environ.get("WEB_UI_REPORTS_DIR", "").strip()
+    return Path(override).expanduser().resolve() if override else project_root / "reports"

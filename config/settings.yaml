@@ -19,11 +19,30 @@ artifacts:
   tracing: retain-on-failure
   navigation_wait_until: domcontentloaded
 
-# Claude Sonnet 5 — set ANTHROPIC_API_KEY and enabled: true
+# Claude Sonnet 5.5 — set ANTHROPIC_API_KEY and enabled: true
 ai:
-  enabled: false
-  model: claude-sonnet-5
+  enabled: true
+  model: claude-sonnet-5-5
   max_tokens: 2048
+
+# Accessibility of the site under test (axe-core, in the real browser).
+# WCAG 2.1 AA is what EN 301 549 requires (EU Web Accessibility Directive, European Accessibility Act);
+# wcag22aa adds the WCAG 2.2 criteria. fail_on: minor | moderate | serious | critical | none
+accessibility:
+  enabled: true
+  standard: wcag21aa
+  fail_on: none  # report only: playwright.dev is not our site. Use serious for a site you own.
+  pages:
+    - /
+    - /docs/intro
+
+# Irish / EU website requirements: privacy notice, cookie consent (no tracking before consent),
+# accessibility statement, company details, contact details, terms. Off unless the site is yours.
+compliance:
+  enabled: false
+  pages:
+    - /
+  checks: [privacy_notice, cookie_consent, accessibility_statement, company_details, contact_details]
 
 notifications:
   email:
@@ -37,6 +56,6 @@ notifications:
     to_addrs:
       - qa-team@example.com
   telegram:
-    enabled: false
+    enabled: true
     bot_token: "${TELEGRAM_BOT_TOKEN}"
     chat_id: "${TELEGRAM_CHAT_ID}"

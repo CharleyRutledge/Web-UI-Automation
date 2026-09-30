@@ -1,0 +1,58 @@
+name: Extended tests
+
+on:
+  schedule:
+    # Weekly, Mondays (UTC). Load runs first; the live check an hour later.
+    - cron: "17 5 * * 1"   # load / performance
+    - cron: "43 6 * * 1"   # live check against the real Telegram and Anthropic APIs
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Which extended suite to run
+        type: choice
+        options: [load, live]
+        default: load
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'load' || github.event.schedule == '17 5 * * 1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Load and performance tests
+        # -s prints the measured numbers ([load] lines) into the job log.
+        run: python -m pytest -c selftests/pytest.ini selftests -m load -s -p no:cacheprovider
+
+  live:
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'live' || github.event.schedule == '43 6 * * 1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+      - name: Live check (real Claude + Telegram, uses a little API credit)
+        run: python -m pytest -c selftests/pytest.ini selftests -m live -p no:cacheprovider
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

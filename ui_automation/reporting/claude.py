@@ -7,27 +7,46 @@ if TYPE_CHECKING:
     from ui_automation.config import AiSettings
     from ui_automation.reporting.summary import RunSummary
 
+_SYSTEM = (
+    "You explain failed automated UI test runs to the person who owns the tests. "
+    "They read your answer on a phone, inside a short report. "
+    "Write plain text only: no Markdown, no asterisks, no headings, no bullet symbols other than '-'. "
+    "Only state what the evidence shows; if the cause is unclear, say so instead of guessing. "
+    "Do not comment on videos, traces, reruns or flakiness unless the failure text points to them."
+)
 
-def build_analysis_prompt(summary: RunSummary, report_excerpt: str = "") -> str:
+
+def build_analysis_prompt(summary: RunSummary) -> str:
     lines = [
-        "You are a senior QA engineer reviewing a Playwright pytest run.",
-        f"Status: {summary.short_status()}",
-        f"Exit code: {summary.exit_status}",
-        f"Videos saved: {len(summary.video_files)}",
-        f"Traces saved: {len(summary.trace_files)}",
+        "Test run facts:",
+        f"- Site under test: {summary.base_url or 'unknown'}",
+        f"- Result: {summary.passed} passed, {summary.failed} failed, "
+        f"{summary.errors} errors, {summary.skipped} skipped",
+        "- Tests use Playwright (pytest-playwright, Chromium).",
+        "",
+        "All tests:",
     ]
-    if summary.report_html:
-        lines.append(f"HTML report: {summary.report_html}")
-    if report_excerpt:
-        lines.append("\nReport excerpt:\n" + report_excerpt[:8000])
+    lines.extend(f"- {t.outcome.upper()}: {t.nodeid}" for t in summary.tests)
+    lines.append("")
+    lines.append("Failures (error message and end of the traceback):")
+    for t in summary.problems:
+        step = f"Stopped at step: {t.last_step}\n" if t.last_step else ""
+        lines.append(f"\n=== {t.nodeid}\n{step}{t.message}\n{t.details}")
     lines.append(
-        "\nProvide: (1) one-line verdict, (2) likely root causes if failed, "
-        "(3) top 3 next debugging steps using Playwright best practices."
+        "\nFor each failing test write:\n"
+        "<test name in plain words>\n"
+        "What broke: one sentence in plain words.\n"
+        "Likely cause: one sentence.\n"
+        "Fix: one concrete step.\n\n"
+        "Keep the whole answer under 150 words."
     )
-    return "\n".join(lines)
+    return "\n".join(lines)[:20000]
 
 
 def analyze_run(summary: RunSummary, ai: AiSettings) -> str | None:
+    # A green run needs no analysis: skip the call (and the cost) entirely.
+    if summary.ok or not summary.problems:
+        return None
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not ai.enabled or not api_key:
         return None
@@ -37,28 +56,18 @@ def analyze_run(summary: RunSummary, ai: AiSettings) -> str | None:
     except ImportError:
         return None
 
-    excerpt = ""
-    if summary.report_html and summary.report_html.is_file():
-        try:
-            text = summary.report_html.read_text(encoding="utf-8", errors="ignore")
-            if "Failed" in text or "Error" in text:
-                excerpt = text[:12000]
-        except OSError:
-            pass
-
-    client = Anthropic(api_key=api_key)
-    message = client.messages.create(
+    # ANTHROPIC_BASE_URL (read by the SDK) can point this at another endpoint.
+    client = Anthropic(api_key=api_key, timeout=ai.timeout_seconds, max_retries=2)
+    message = client.beta.messages.create(
         model=ai.model,
         max_tokens=ai.max_tokens,
-        messages=[
-            {
-                "role": "user",
-                "content": build_analysis_prompt(summary, excerpt),
-            }
-        ],
+        system=_SYSTEM,
+        # If a safety classifier declines, re-run on a fallback model instead of returning nothing.
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
+        messages=[{"role": "user", "content": build_analysis_prompt(summary)}],
     )
-    parts = []
-    for block in message.content:
-        if hasattr(block, "text"):
-            parts.append(block.text)
+    if message.stop_reason == "refusal":
+        return None
+    parts = [block.text for block in message.content if block.type == "text"]
     return "\n".join(parts).strip() or None

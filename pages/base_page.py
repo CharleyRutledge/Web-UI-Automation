@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page, expect
 
 from ui_automation.config import Settings
@@ -59,15 +60,23 @@ class BasePage:
         """Record a human-readable step and capture a screenshot for the HTML report."""
         filename = f"{self._step_index:03d}_{_slug(label)}.png"
         self._step_index += 1
+        if self.page.url == "about:blank":
+            return  # nothing to capture yet; recent Chromium builds refuse to screenshot a blank page
         path = self._artifacts_dir / filename
-        self.page.screenshot(
-            path=str(path),
-            full_page=self.settings.screenshot_full_page,
-        )
+        try:
+            self.page.screenshot(
+                path=str(path),
+                full_page=self.settings.screenshot_full_page,
+            )
+        except PlaywrightError as exc:
+            # A diagnostic screenshot must never fail the test itself.
+            print(f"Step screenshot skipped for {label!r}: {exc.message.splitlines()[0]}")
+            return
         self._request.node.step_screenshots.append((label, str(path)))
 
     def goto_path(self, path: str) -> None:
-        path = path if path.startswith("/") else f"/{path}"
+        if not path.startswith(("/", "http://", "https://")):
+            path = f"/{path}"
         self.step(f"Navigate to {path}")
         self.page.goto(
             path,
@@ -107,6 +116,31 @@ class BasePage:
         expect(self.page).to_have_title(
             re.compile(re.escape(text), re.IGNORECASE),
         )
+
+    def expect_accessible(self, *, fail_on: str | None = None) -> list:
+        """Scan the current page with axe-core against the configured WCAG standard.
+
+        Every finding is recorded for the report; the test fails when any is at or above `fail_on`
+        (default: accessibility.fail_on in settings.yaml; "none" only reports).
+        """
+        from ui_automation.accessibility import at_or_above, describe, scan
+
+        cfg = self.settings.accessibility
+        threshold = fail_on or cfg.fail_on
+        self.step(f"Check accessibility ({cfg.standard.upper()})")
+        violations = scan(self.page, cfg.standard)
+        record = getattr(self._request.node, "accessibility", None)
+        if record is None:
+            record = self._request.node.accessibility = []
+        record.append({
+            "url": self.page.url,
+            "standard": cfg.standard,
+            "violations": [v.__dict__ for v in violations],
+        })
+        blocking = [] if threshold == "none" else at_or_above(violations, threshold)
+        if blocking:
+            raise AssertionError(f"{self.page.url}: " + describe(blocking))
+        return violations
 
     def expect_heading(self, name: str) -> None:
         self.expect_visible(

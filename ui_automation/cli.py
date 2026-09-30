@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import shutil
 import subprocess
 import sys
+import time
+import uuid
 import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ui_automation.config import load_settings
+from ui_automation.config import load_settings, reports_root
 
 
 def _project_root() -> Path:
@@ -31,42 +34,105 @@ def setup_project(root: Path, *, include_mcp: bool) -> int:
     return 0
 
 
-def publish_latest_report(run_dir: Path, root: Path) -> Path:
-    """Copy the run report and artifacts to reports/latest for a stable path."""
-    latest_dir = root / "reports" / "latest"
-    latest_dir.mkdir(parents=True, exist_ok=True)
-    src = run_dir / "report.html"
-    dst = latest_dir / "report.html"
-    if src.is_file():
-        shutil.copy2(src, dst)
+def new_run_dir(reports_dir: Path) -> Path:
+    """A fresh run folder named after the UTC time. Two runs in the same second get _2, _3, …
 
-    for folder in ("screenshots", "videos", "traces"):
-        src_dir = run_dir / folder
-        dst_dir = latest_dir / folder
-        if src_dir.is_dir():
-            if dst_dir.exists():
-                shutil.rmtree(dst_dir)
-            shutil.copytree(src_dir, dst_dir)
+    mkdir(exist_ok=False) makes the choice atomic, so concurrent runs never share a folder.
+    """
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    for n in range(1, 1000):
+        candidate = reports_dir / (stamp if n == 1 else f"{stamp}_{n}")
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            continue
+        return candidate.resolve()
+    raise RuntimeError(f"Could not create a unique run folder under {reports_dir}")
 
-    claude_src = run_dir / "claude_summary.txt"
-    if claude_src.is_file():
-        shutil.copy2(claude_src, latest_dir / "claude_summary.txt")
 
-    summary_src = run_dir / "summary.json"
-    if summary_src.is_file():
-        shutil.copy2(summary_src, latest_dir / "summary.json")
+@contextlib.contextmanager
+def _dir_lock(lock: Path, timeout: float = 60.0, stale_after: float = 300.0):
+    """Cross-process lock: mkdir is atomic on every OS. A lock older than `stale_after` is from a crashed run."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            lock.mkdir()
+            break
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > stale_after:
+                    lock.rmdir()
+                    continue
+            except OSError:
+                continue
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"{lock} is held by another run") from None
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        try:
+            lock.rmdir()
+        except OSError:
+            pass
 
-    return dst
+
+_LATEST_FILES = ("report.html", "claude_summary.txt", "summary.json", "summary.html")
+_LATEST_DIRS = ("screenshots", "failure-screenshots", "videos", "traces")
+
+
+def publish_latest_report(run_dir: Path, reports_dir: Path) -> Path:
+    """Make <reports>/latest a complete copy of this run, safely even when runs finish at the same time.
+
+    The copy is built in a private staging folder and then swapped in with atomic renames under a lock,
+    so `latest` is never half-written or a mix of two runs.
+    """
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    token = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    staging = reports_dir / f".latest-staging-{token}"
+    staging.mkdir()
+    for name in _LATEST_FILES:
+        if (run_dir / name).is_file():
+            shutil.copy2(run_dir / name, staging / name)
+    for folder in _LATEST_DIRS:
+        if (run_dir / folder).is_dir():
+            shutil.copytree(run_dir / folder, staging / folder)
+
+    latest = reports_dir / "latest"
+    retired = reports_dir / f".latest-old-{token}"
+    with _dir_lock(reports_dir / ".latest.lock"):
+        if latest.exists():
+            os.replace(latest, retired)
+        os.replace(staging, latest)
+    shutil.rmtree(retired, ignore_errors=True)
+    return latest / "report.html"
 
 
 def open_report(path: Path) -> None:
     uri = path.resolve().as_uri()
     print(f"Opening report: {uri}")
-    if not webbrowser.open(uri):
+    try:
+        if webbrowser.open(uri):
+            return
         if sys.platform == "win32":
             os.startfile(path)  # noqa: S606
         else:
             subprocess.call(["xdg-open", str(path)])
+    except OSError:
+        # Headless machines (servers, CI, containers) have no browser; the run itself still succeeded.
+        print(f"Could not open a browser. Open the report manually: {path.resolve()}")
+
+
+def _run_pytest(cmd: list[str], root: Path) -> int:
+    """Run pytest and wait for it. Ctrl-C reaches pytest too (same terminal); it stops the tests and
+    still writes its results, so we keep waiting instead of dying with a traceback mid-report."""
+    proc = subprocess.Popen(cmd, cwd=str(root))
+    while True:
+        try:
+            return proc.wait()
+        except KeyboardInterrupt:
+            print("\nInterrupted: waiting for pytest to save the results so far...", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -128,16 +194,24 @@ def main(argv: list[str] | None = None) -> int:
     if pytest_args and pytest_args[0] == "--":
         pytest_args = pytest_args[1:]
 
-    settings = load_settings(args.config)
+    if args.config:
+        # The tests run with cwd=root, so a config path relative to the caller's cwd must be absolutized.
+        args.config = str(Path(args.config).expanduser().resolve())
+    try:
+        settings = load_settings(args.config)
+    except (OSError, ValueError) as exc:
+        print(f"Invalid configuration: {exc}", file=sys.stderr)
+        return 2
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    run_dir = (root / "reports" / ts).resolve()
-    run_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir = reports_root(root)
+    try:
+        run_dir = new_run_dir(reports_dir)
+    except OSError as exc:
+        print(f"Cannot create a run folder under {reports_dir}: {exc}", file=sys.stderr)
+        return 2
     playwright_output = run_dir / "playwright-output"
 
     os.environ["WEB_UI_RUN_DIR"] = str(run_dir)
-    if os.environ.get("CI"):
-        os.environ.setdefault("CI", "true")
 
     html_report = run_dir / "report.html"
     report_css = root / "ui_automation" / "reporting" / "assets" / "report_theme.css"
@@ -145,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.executable,
         "-m",
         "pytest",
-        str(root / "tests"),
+        # No explicit test path: pytest.ini's testpaths applies unless the user passes their own after --.
         f"--html={html_report}",
         "--self-contained-html",
         f"--css={report_css}",
@@ -163,9 +237,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Playwright output: {playwright_output}")
     print(f"Video mode: {settings.video_mode}")
 
-    exit_code = subprocess.call(cmd, cwd=str(root))
+    exit_code = _run_pytest(cmd, root)
 
-    latest_report = publish_latest_report(run_dir, root)
+    # pytest has exited, so report.html and summary.json are complete: now analyse and notify.
+    from ui_automation.reporting.pipeline import notify_run
+
+    notify_run(run_dir, settings)
+
+    latest_report = publish_latest_report(run_dir, reports_dir)
     print(f"Latest report copy: {latest_report}")
 
     if args.open and latest_report.is_file():
