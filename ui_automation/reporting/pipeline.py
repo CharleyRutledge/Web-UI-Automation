@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,37 +19,82 @@ from ui_automation.reporting.summary import RunSummary, TestResult
 from ui_automation.reporting.telegram_notify import send_run_telegram
 
 
-def collect_playwright_artifacts(output_dir: Path, run_dir: Path) -> tuple[list[Path], list[Path]]:
-    """Copy videos and traces from pytest-playwright output into the run report folder."""
-    videos_dst = run_dir / "videos"
-    traces_dst = run_dir / "traces"
-    videos_dst.mkdir(parents=True, exist_ok=True)
-    traces_dst.mkdir(parents=True, exist_ok=True)
+_ARTIFACT_DIRS = {".webm": "videos", ".zip": "traces", ".png": "failure-screenshots"}
 
+
+def collect_playwright_artifacts(output_dir: Path, run_dir: Path) -> tuple[list[Path], list[Path]]:
+    """Copy videos, traces and failure screenshots from pytest-playwright output into the run folder.
+
+    Each test keeps its own sub-folder (named after its node id), e.g. videos/<test>/video.webm.
+    """
     video_files: list[Path] = []
     trace_files: list[Path] = []
-
+    for folder in set(_ARTIFACT_DIRS.values()):
+        (run_dir / folder).mkdir(parents=True, exist_ok=True)
     if not output_dir.is_dir():
         return video_files, trace_files
 
     for src in output_dir.rglob("*"):
-        if not src.is_file():
-            continue
         suffix = src.suffix.lower()
+        if not src.is_file() or suffix not in _ARTIFACT_DIRS:
+            continue
+        if suffix == ".zip" and "trace" not in src.name.lower():
+            continue
+        dst = run_dir / _ARTIFACT_DIRS[suffix] / src.relative_to(output_dir)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
         if suffix == ".webm":
-            rel = src.relative_to(output_dir)
-            dst = videos_dst / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
             video_files.append(dst)
-        elif suffix == ".zip" and "trace" in src.name.lower():
-            rel = src.relative_to(output_dir)
-            dst = traces_dst / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            mp4 = _to_mp4(dst)
+            if mp4:
+                video_files.append(mp4)
+        elif suffix == ".zip":
             trace_files.append(dst)
-
     return video_files, trace_files
+
+
+def _to_mp4(webm: Path) -> Path | None:
+    """Playwright records WebM, which iPhones/Safari may not play; add an H.264 MP4 copy if ffmpeg exists."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    mp4 = webm.with_suffix(".mp4")
+    cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", str(webm), "-c:v", "libx264", "-preset", "veryfast",
+           "-crf", "28", "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+           "-movflags", "+faststart", "-an", str(mp4)]
+    try:
+        subprocess.run(cmd, check=True, timeout=120, capture_output=True)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"MP4 conversion skipped for {webm.name}: {exc}")
+        return None
+    return mp4
+
+
+def _artifact_folder(nodeid: str) -> str:
+    """The per-test folder name pytest-playwright uses for this test's video / trace / screenshot."""
+    try:
+        from pytest_playwright.pytest_playwright import _truncate_file_name
+        from slugify import slugify
+    except ImportError:
+        return ""
+    return _truncate_file_name(slugify(nodeid))
+
+
+def _attach_media(summary: RunSummary, run_dir: Path) -> None:
+    def rel(paths: list[Path]) -> list[str]:
+        return [str(p.relative_to(run_dir)) for p in sorted(paths)]
+
+    for test in summary.tests:
+        folder = _artifact_folder(test.nodeid)
+        if folder:
+            # MP4 first (iPhone/Safari), WebM second (browsers without H.264); players pick what they can.
+            video_dir = run_dir / "videos" / folder
+            test.videos = rel(list(video_dir.glob("*.mp4"))) + rel(list(video_dir.glob("*.webm")))
+            test.traces = rel(list((run_dir / "traces" / folder).glob("*.zip")))
+            test.failure_screenshots = rel(list((run_dir / "failure-screenshots" / folder).glob("*.png")))
+        test.screenshots = [
+            str(Path(p).relative_to(run_dir)) if Path(p).is_relative_to(run_dir) else p for p in test.screenshots
+        ]
 
 
 _OUTCOME_RANK = {"passed": 0, "skipped": 1, "failed": 2, "error": 3}
@@ -134,7 +180,8 @@ def finalize_run(
     if output:
         summary.video_files, summary.trace_files = collect_playwright_artifacts(Path(output), run_dir)
         if summary.video_files:
-            print(f"Saved {len(summary.video_files)} video(s) under {run_dir / 'videos'}")
+            print(f"Saved {len(summary.video_files)} video file(s) under {run_dir / 'videos'}")
+    _attach_media(summary, run_dir)
 
     payload = summary.to_dict()
     payload["generated_at"] = datetime.now(timezone.utc).isoformat()

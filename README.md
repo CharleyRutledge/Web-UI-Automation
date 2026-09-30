@@ -19,8 +19,11 @@ python -m ui_automation --open
 |------|----------|
 | `reports/<timestamp>/report.html` | HTML report with embedded step screenshots |
 | `reports/latest/report.html` | Copy of the last run |
-| `reports/<timestamp>/videos/` | `.webm` recordings (when `artifacts.video: on`) |
-| `reports/<timestamp>/traces/` | Playwright trace `.zip` on failure |
+| `reports/<timestamp>/summary.html` | Short phone-friendly report (sent by Telegram/email) with videos, screenshots and traces embedded |
+| `reports/<timestamp>/videos/` | Recordings per browser test: `.webm`, plus `.mp4` when `ffmpeg` is installed (plays on iPhone) |
+| `reports/<timestamp>/screenshots/` | A screenshot per test step |
+| `reports/<timestamp>/failure-screenshots/` | Playwright's screenshot at the moment a test failed |
+| `reports/<timestamp>/traces/` | Playwright trace `.zip` on failure (open at [trace.playwright.dev](https://trace.playwright.dev)) |
 | `reports/<timestamp>/claude_summary.txt` | AI analysis (when enabled) |
 
 ```powershell
@@ -61,7 +64,7 @@ artifacts:
 
 The CLI passes `--video` and stores output under `reports/<timestamp>/playwright-output/`, then copies `.webm` files to `reports/<timestamp>/videos/`.
 
-In **GitHub Actions** (`CI=true`), video is always forced to `on`. Workflow uploads `reports/**/videos/**/*.webm` as artifacts.
+In **GitHub Actions** (`CI=true`), video is always forced to `on`. The workflow installs `ffmpeg` (for the MP4 copies) and uploads four artifacts: `test-report` (summary + full HTML report), `test-videos`, `test-screenshots` and `playwright-traces`.
 
 ## Claude Sonnet 5.5 (AI)
 

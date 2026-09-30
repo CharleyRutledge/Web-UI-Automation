@@ -15,6 +15,10 @@ class TestResult:
     details: str = ""  # traceback tail for failed / error
     screenshots: list[str] = field(default_factory=list)  # step screenshots, in order
     steps: list[str] = field(default_factory=list)  # step labels, in order
+    # Paths relative to the run folder (so a copied folder, e.g. reports/latest, still resolves).
+    failure_screenshots: list[str] = field(default_factory=list)  # taken by Playwright at the failure
+    videos: list[str] = field(default_factory=list)  # the same recording: .mp4 (if converted) then .webm
+    traces: list[str] = field(default_factory=list)  # Playwright trace .zip (open at trace.playwright.dev)
 
     @property
     def title(self) -> str:

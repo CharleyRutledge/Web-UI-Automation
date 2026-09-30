@@ -42,7 +42,7 @@ def publish_latest_report(run_dir: Path, root: Path) -> Path:
     elif dst.exists():
         dst.unlink()
 
-    for folder in ("screenshots", "videos", "traces"):
+    for folder in ("screenshots", "failure-screenshots", "videos", "traces"):
         src_dir = run_dir / folder
         dst_dir = latest_dir / folder
         if dst_dir.exists():

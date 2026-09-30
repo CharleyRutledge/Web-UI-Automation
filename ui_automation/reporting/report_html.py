@@ -9,7 +9,10 @@ from pathlib import Path
 
 from ui_automation.reporting.summary import RunSummary, TestResult
 
-_MAX_EMBEDDED_SCREENSHOTS = 5
+# The report travels as one file (Telegram's limit is 50 MB, many mail servers stop at ~25 MB),
+# so media is embedded until this budget is used; anything beyond it is linked to the CI run.
+_EMBED_BUDGET_BYTES = 18 * 1024 * 1024
+_MIME = {".png": "image/png", ".mp4": "video/mp4", ".webm": "video/webm", ".zip": "application/zip"}
 
 _CSS = """
 :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#667085; --line:#e4e7ec;
@@ -45,6 +48,12 @@ h2 { font-size:16px; margin:20px 0 8px; }
        border-radius:999px; padding:0 8px; margin-left:4px; vertical-align:1px; }
 .msg { color:var(--fail); margin:8px 0; white-space:pre-wrap; word-break:break-word; }
 .ai { white-space:pre-wrap; }
+video { width:100%; border-radius:8px; margin-top:6px; background:#000; }
+figure { margin:12px 0 0; } figcaption { color:var(--muted); font-size:13px; }
+.sub { font-weight:600; font-size:13px; margin-top:12px; }
+.btn { display:inline-block; margin-top:6px; padding:8px 14px; border-radius:8px; border:1px solid var(--line);
+       text-decoration:none; font-weight:600; }
+.card .name .dot { vertical-align:-5px; margin-right:4px; }
 img { width:100%; border:1px solid var(--line); border-radius:8px; margin-top:8px; }
 details { margin-top:8px; } summary { cursor:pointer; color:var(--muted); font-size:13px; }
 pre { background:var(--code-bg); border-radius:8px; padding:10px; overflow-x:auto; font-size:12px; margin:8px 0 0; }
@@ -73,12 +82,52 @@ def _fmt_duration(seconds: float) -> str:
     return f"{int(seconds // 60)} m {seconds % 60:.0f} s"
 
 
-def _embed_png(path: str) -> str:
-    p = Path(path)
-    if not p.is_file():
-        return ""
-    data = base64.b64encode(p.read_bytes()).decode("ascii")
-    return f'<img alt="Last screenshot before the failure" src="data:image/png;base64,{data}">'
+class _Embedder:
+    """Turns run files into data: URIs until the size budget is spent (earlier calls win)."""
+
+    def __init__(self, run_dir: Path | None, budget: int = _EMBED_BUDGET_BYTES) -> None:
+        self.run_dir = run_dir
+        self.remaining = budget
+        self.skipped = 0
+
+    def resolve(self, path: str) -> Path:
+        p = Path(path)
+        return p if p.is_absolute() or self.run_dir is None else self.run_dir / p
+
+    def uri(self, path: str) -> str | None:
+        p = self.resolve(path)
+        if not p.is_file():
+            return None
+        size = p.stat().st_size
+        if size * 4 // 3 > self.remaining:  # base64 grows the file by a third
+            self.skipped += 1
+            return None
+        self.remaining -= size * 4 // 3
+        mime = _MIME.get(p.suffix.lower(), "application/octet-stream")
+        return f"data:{mime};base64,{base64.b64encode(p.read_bytes()).decode('ascii')}"
+
+    def img(self, path: str, alt: str) -> str:
+        src = self.uri(path)
+        return f'<img alt="{escape(alt)}" src="{src}">' if src else ""
+
+    def video(self, paths: list[str]) -> str:
+        """One player with every available encoding of the same recording."""
+        sources = []
+        for path in paths:
+            src = self.uri(path)
+            if src:
+                mime = _MIME.get(Path(path).suffix.lower(), "video/webm")
+                sources.append(f'<source src="{src}" type="{mime}">')
+        if not sources:
+            return ""
+        return (
+            '<video controls playsinline muted preload="metadata">'
+            f'{"".join(sources)}Your viewer cannot play this video.</video>'
+        )
+
+    def download(self, path: str, filename: str, label: str) -> str:
+        src = self.uri(path)
+        return f'<a class="btn" download="{escape(filename)}" href="{src}">{escape(label)}</a>' if src else ""
 
 
 def _tile(count: int, label: str, cls: str) -> str:
@@ -90,8 +139,13 @@ def _variant(test: TestResult) -> str:
     return f' <span class="tag">{escape(test.variant)}</span>' if test.variant else ""
 
 
-def _failure_card(test: TestResult, embed: bool) -> str:
-    screenshot = _embed_png(test.screenshots[-1]) if embed and test.screenshots else ""
+def _failure_card(test: TestResult, media: _Embedder) -> str:
+    if test.failure_screenshots:
+        shot, caption = media.img(test.failure_screenshots[-1], "Screen when the test failed"), "Screen when it failed:"
+    elif test.screenshots:
+        shot, caption = media.img(test.screenshots[-1], "Screen at the last step"), "Screen at the last step:"
+    else:
+        shot, caption = "", ""
     label = "Error during setup/teardown" if test.outcome == "error" else "Failed"
     details = (
         f"<details><summary>Full error</summary><pre>{escape(test.details)}</pre></details>"
@@ -101,14 +155,43 @@ def _failure_card(test: TestResult, embed: bool) -> str:
     step = (
         f'<div class="step">Stopped at step: <b>{escape(test.last_step)}</b></div>' if test.last_step else ""
     )
-    shot_note = '<div class="file">Screen at that step:</div>' if screenshot else ""
+    shot_note = f'<div class="file">{caption}</div>' if shot else ""
     return (
         f'<div class="card fail"><div class="name">{escape(test.title)}{_variant(test)}</div>'
         f'<div class="file">{escape(test.file)} · {label} after {_fmt_duration(test.duration)}</div>'
         f"{step}"
         f'<div class="msg">{escape(test.message or "No error message")}</div>'
-        f"{shot_note}{screenshot}{details}</div>"
+        f"{shot_note}{shot}{details}</div>"
     )
+
+
+def _media_card(test: TestResult, media: _Embedder, run_name: str) -> str:
+    failed = test.outcome in ("failed", "error")
+    parts = [
+        f'<div class="card{" fail" if failed else ""}"><div class="name">'
+        f'<span class="dot {test.outcome}">{_DOT.get(test.outcome, "?")}</span> '
+        f"{escape(test.title)}{_variant(test)}</div>"
+    ]
+    if test.videos:
+        player = media.video(test.videos)
+        parts.append(f'<div class="sub">Video</div>{player}' if player else '<div class="file">Video too large to include; it is in the CI run.</div>')
+    if test.screenshots:
+        shots = "".join(
+            f'<figure><figcaption>{i}. {escape(label)}</figcaption>{media.img(path, label)}</figure>'
+            for i, (label, path) in enumerate(zip(test.steps or [""] * len(test.screenshots), test.screenshots), 1)
+        )
+        opened = " open" if failed else ""
+        parts.append(f"<details{opened}><summary>Step screenshots ({len(test.screenshots)})</summary>{shots}</details>")
+    for i, trace in enumerate(test.traces):
+        link = media.download(trace, f"{run_name}-{test.title.replace(' ', '-').lower()}-trace{i or ''}.zip", "Download trace")
+        if link:
+            parts.append(
+                f'<div class="sub">Trace</div>{link}'
+                '<div class="file">Open it at <a href="https://trace.playwright.dev">trace.playwright.dev</a> '
+                "to replay every action, network call and console message.</div>"
+            )
+    parts.append("</div>")
+    return "".join(parts)
 
 
 def render_summary_html(summary: RunSummary, ai_text: str | None = None) -> str:
@@ -137,14 +220,23 @@ def render_summary_html(summary: RunSummary, ai_text: str | None = None) -> str:
         + "</section>",
     ]
 
+    media = _Embedder(summary.run_dir)
     problems = summary.problems
     if problems:
         parts.append("<h2>What failed</h2>")
-        parts.extend(
-            _failure_card(t, embed=i < _MAX_EMBEDDED_SCREENSHOTS) for i, t in enumerate(problems)
-        )
+        parts.extend(_failure_card(t, media) for t in problems)
     if ai_text:
         parts.append(f'<h2>Claude\'s analysis</h2><div class="card ai">{escape(ai_text)}</div>')
+
+    order_media = {"error": 0, "failed": 1, "passed": 2, "skipped": 3}
+    with_media = [t for t in summary.tests if t.videos or t.screenshots or t.traces]
+    if with_media:
+        run_name = summary.run_dir.name if summary.run_dir else "run"
+        parts.append("<h2>Screenshots &amp; videos</h2>")
+        parts.extend(
+            _media_card(t, media, run_name)
+            for t in sorted(with_media, key=lambda t: (order_media.get(t.outcome, 4), t.nodeid))
+        )
 
     rows = []
     order = {"error": 0, "failed": 1, "skipped": 2, "passed": 3}
@@ -167,6 +259,8 @@ def render_summary_html(summary: RunSummary, ai_text: str | None = None) -> str:
         f"Videos: {len(summary.video_files)} · Traces: {len(summary.trace_files)} "
         f"(only browser tests record video{'; ' + trace_note if trace_note else ''})."
     ]
+    if media.skipped:
+        foot.append(f"{media.skipped} file(s) were too large to include in this report; they are in the CI run.")
     if summary.run_url:
         foot.append(f'Full report, videos and traces: <a href="{escape(summary.run_url)}">CI run</a>')
     elif summary.run_dir:

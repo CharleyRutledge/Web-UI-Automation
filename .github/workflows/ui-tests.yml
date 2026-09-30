@@ -14,9 +14,11 @@ jobs:
     env:
       CI: true
     steps:
-      - uses: actions/checkout@v4
+      # v7 actions run on Node 24; the v4/v5 ones ran on deprecated Node 20 and printed the
+      # "punycode module is deprecated" warnings.
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -25,6 +27,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m playwright install --with-deps chromium
+          # ffmpeg turns Playwright's WebM recordings into MP4 so videos also play on iPhone/Safari.
+          sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: Run UI tests
         run: python -m ui_automation
@@ -35,34 +39,48 @@ jobs:
           EMAIL_SMTP_USER: ${{ secrets.EMAIL_SMTP_USER }}
           EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
 
-      - name: Upload HTML report
+      # reports/latest is a copy of the run folder, so it is excluded to avoid uploading everything twice.
+      - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: html-report
-          path: reports/**/report.html
+          name: test-report
+          path: |
+            reports/*/summary.html
+            reports/*/report.html
+            reports/*/summary.json
+            reports/*/claude_summary.txt
+            !reports/latest/**
           if-no-files-found: warn
 
       - name: Upload videos
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-videos
-          path: reports/**/videos/**/*.webm
+          path: |
+            reports/*/videos/**
+            !reports/latest/**
           if-no-files-found: warn
 
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-screenshots
+          path: |
+            reports/*/screenshots/**
+            reports/*/failure-screenshots/**
+            !reports/latest/**
+          if-no-files-found: warn
+
+      # Traces are kept for failed tests only (artifacts.tracing: retain-on-failure), so a green run has none.
       - name: Upload traces
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-traces
-          path: reports/**/traces/**/*.zip
-          if-no-files-found: warn
-
-      - name: Upload Claude summary
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: claude-summary
-          path: reports/**/claude_summary.txt
+          path: |
+            reports/*/traces/**
+            !reports/latest/**
           if-no-files-found: ignore
