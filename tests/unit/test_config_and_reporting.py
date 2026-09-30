@@ -21,13 +21,13 @@ def test_env_substituted_false_is_false(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "text",
     [
-        "base_url: playwright.dev\n",
-        "base_url: http://x\ntimeout_ms: -5\n",
-        "base_url: http://x\nslow_mo_ms: abc\n",
-        "base_url: http://x\nartifacts: on\n",
-        "base_url: http://x\nviewport: 5\n",
-        "base_url: http://x\nheadless: maybe\n",
-        "- a\n",
+        pytest.param("base_url: playwright.dev\n", id="base_url_without_scheme"),
+        pytest.param("base_url: http://x\ntimeout_ms: -5\n", id="negative_timeout"),
+        pytest.param("base_url: http://x\nslow_mo_ms: abc\n", id="non_numeric_slow_mo"),
+        pytest.param("base_url: http://x\nartifacts: on\n", id="artifacts_not_a_mapping"),
+        pytest.param("base_url: http://x\nviewport: 5\n", id="viewport_not_a_mapping"),
+        pytest.param("base_url: http://x\nheadless: maybe\n", id="headless_not_a_boolean"),
+        pytest.param("- a\n", id="root_is_a_list"),
     ],
 )
 def test_invalid_config_raises_value_error(tmp_path, text):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -13,11 +14,19 @@ def _is_unresolved(value: str) -> bool:
     return "${" in value
 
 
-def _call(token: str, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _call(
+    token: str,
+    method: str,
+    payload: dict[str, Any],
+    files: dict[str, tuple[str, bytes, str]] | None = None,
+) -> dict[str, Any]:
     """POST to the Bot API. The URL embeds the bot token, so it must never reach an error message."""
     url = f"https://api.telegram.org/bot{token}/{method}"
     try:
-        response = requests.post(url, json=payload, timeout=30)
+        if files:
+            response = requests.post(url, data=payload, files=files, timeout=60)
+        else:
+            response = requests.post(url, json=payload, timeout=30)
     except requests.RequestException as exc:
         raise RuntimeError(f"Telegram {method} request failed ({type(exc).__name__})") from None
     if not response.ok:
@@ -26,6 +35,28 @@ def _call(token: str, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         return response.json()
     except ValueError:
         raise RuntimeError(f"Telegram {method} returned a non-JSON response") from None
+
+
+_CAPTION_LIMIT = 1024  # Telegram's limit for a document caption
+
+
+def build_caption(summary: RunSummary) -> str:
+    lines = [summary.headline()]
+    problems = summary.problems
+    if problems:
+        lines.append("")
+        for test in problems[:5]:
+            reason = (test.message or "no error message")[:160]
+            where = f" at step \"{test.last_step}\"" if test.last_step else ""
+            lines.append(f"• {test.title}{where}: {reason}")
+        if len(problems) > 5:
+            lines.append(f"…and {len(problems) - 5} more")
+    lines.append("")
+    lines.append("Full details are in the attached report.")
+    if summary.run_url:
+        lines.append(f"CI run: {summary.run_url}")
+    caption = "\n".join(lines)
+    return caption if len(caption) <= _CAPTION_LIMIT else caption[: _CAPTION_LIMIT - 1] + "…"
 
 
 def discover_chat_id(token: str) -> str | None:
@@ -44,7 +75,9 @@ def send_run_telegram(
     telegram: TelegramSettings,
     *,
     ai_summary: str | None = None,
+    attachment: Path | None = None,
 ) -> None:
+    # ai_summary is part of the attached report; the caption stays short on purpose.
     if not telegram.enabled or not telegram.bot_token:
         return
     if _is_unresolved(telegram.bot_token):
@@ -60,15 +93,20 @@ def send_run_telegram(
                 "- send your bot a message (e.g. 'hi') and re-run"
             )
             return
+        # Telegram only keeps a bot's incoming messages for ~24h, so this lookup stops working later.
+        print(
+            f"Telegram: sending to chat {chat_id}, found from the bot's recent messages. "
+            "Save this number as the TELEGRAM_CHAT_ID secret so future runs keep working."
+        )
 
-    lines = [
-        f"UI Automation — {summary.short_status()}",
-        f"Report: {summary.report_html}" if summary.report_html else "",
-        f"Videos: {len(summary.video_files)}",
-    ]
-    if ai_summary:
-        clipped = ai_summary if len(ai_summary) < 3500 else ai_summary[:3500] + "…"
-        lines.extend(["", "Claude analysis:", clipped])
-
-    text = "\n".join(line for line in lines if line)
-    _call(telegram.bot_token, "sendMessage", {"chat_id": chat_id, "text": text})
+    caption = build_caption(summary)
+    if attachment is not None and attachment.is_file():
+        name = f"ui-tests-{'passed' if summary.ok else 'failed'}-{summary.run_dir.name if summary.run_dir else 'run'}.html"
+        _call(
+            telegram.bot_token,
+            "sendDocument",
+            {"chat_id": chat_id, "caption": caption},
+            files={"document": (name, attachment.read_bytes(), "text/html")},
+        )
+    else:
+        _call(telegram.bot_token, "sendMessage", {"chat_id": chat_id, "text": caption})

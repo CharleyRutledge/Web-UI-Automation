@@ -4,6 +4,7 @@ import base64
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from ui_automation.config import Settings, load_settings
 from ui_automation.reporting.pipeline import finalize_run
 
 _VSCODE_PYTHON_EXTENSION_ID = "ms-python.python"
+_START_KEY = pytest.StashKey[float]()
 
 
 def _debugger_attached() -> bool:
@@ -55,14 +57,21 @@ def pytest_configure(config: pytest.Config) -> None:
         config.option.tracing = settings.tracing_mode
 
 
+def pytest_sessionstart(session: pytest.Session) -> None:
+    session.config.stash[_START_KEY] = time.monotonic()
+
+
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    # Only pipeline runs (python -m ui_automation: CLI, dashboard, CI) set WEB_UI_RUN_DIR. A plain
-    # `pytest` run still writes its summary but must not send email/Telegram or spend API credit.
-    pipeline_run = "WEB_UI_RUN_DIR" in os.environ
+    """Record results to summary.json. Notifications are sent by `python -m ui_automation` after
+    pytest exits, so a plain `pytest` run never emails, messages or spends API credit."""
     run_dir = Path(os.environ.get("WEB_UI_RUN_DIR", "reports/latest"))
+    duration = time.monotonic() - session.config.stash.get(_START_KEY, time.monotonic())
     try:
         settings = load_settings(session.config.getoption("--config"))
-        finalize_run(session, exitstatus, settings, run_dir.resolve(), notify=pipeline_run)
+    except Exception:
+        settings = None
+    try:
+        finalize_run(session, exitstatus, run_dir.resolve(), duration=duration, settings=settings)
     except Exception as exc:
         print(f"Pipeline finalize skipped: {exc}")
 
@@ -177,6 +186,11 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     report = outcome.get_result()
     if report.when != "call":
         return
+
+    early_steps = getattr(item, "step_screenshots", []) or []
+    if early_steps:
+        report.user_properties.append(("step_screenshots", [path for _, path in early_steps]))
+        report.user_properties.append(("step_labels", [label for label, _ in early_steps]))
 
     try:
         import pytest_html

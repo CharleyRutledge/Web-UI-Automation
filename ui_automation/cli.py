@@ -50,7 +50,7 @@ def publish_latest_report(run_dir: Path, root: Path) -> Path:
         if src_dir.is_dir():
             shutil.copytree(src_dir, dst_dir)
 
-    for name in ("claude_summary.txt", "summary.json"):
+    for name in ("claude_summary.txt", "summary.json", "summary.html"):
         file_src = run_dir / name
         file_dst = latest_dir / name
         if file_src.is_file():
@@ -176,6 +176,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Video mode: {settings.video_mode}")
 
     exit_code = subprocess.call(cmd, cwd=str(root))
+
+    # pytest has exited, so report.html and summary.json are complete: now analyse and notify.
+    from ui_automation.reporting.pipeline import notify_run
+
+    notify_run(run_dir, settings)
 
     latest_report = publish_latest_report(run_dir, root)
     print(f"Latest report copy: {latest_report}")

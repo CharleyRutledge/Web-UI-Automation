@@ -27,6 +27,7 @@ class RunRow:
     errors: int
     generated_at: str | None
     has_report: bool
+    has_summary: bool = False
 
 
 def _project_root() -> Path:
@@ -62,6 +63,7 @@ def _list_runs(reports_dir: Path) -> list[RunRow]:
                 errors=data.get("errors", 0),
                 generated_at=data.get("generated_at"),
                 has_report=report_path.is_file(),
+                has_summary=(entry / "summary.html").is_file(),
             )
         )
     rows.sort(key=lambda r: r.run_id, reverse=True)
@@ -135,7 +137,8 @@ _PAGE = """
           <td>{{ row.errors }}</td>
           <td>
             {% if row.has_report %}
-              <a class="report-link" href="/reports/{{ row.run_id }}/report.html" target="_blank">View report</a>
+              {% if row.has_summary %}<a class="report-link" href="/reports/{{ row.run_id }}/summary.html" target="_blank">Summary</a> · {% endif %}
+              <a class="report-link" href="/reports/{{ row.run_id }}/report.html" target="_blank">Full report</a>
             {% else %}
               <span class="empty">n/a</span>
             {% endif %}

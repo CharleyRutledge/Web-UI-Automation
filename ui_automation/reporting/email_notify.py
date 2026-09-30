@@ -4,6 +4,7 @@ import smtplib
 import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -20,7 +21,9 @@ def send_run_email(
     email: EmailSettings,
     *,
     ai_summary: str | None = None,
+    attachment: Path | None = None,
 ) -> None:
+    # ai_summary is part of the attached report.
     if not email.enabled or not email.smtp_host or not email.to_addrs:
         return
     if not email.from_addr:
@@ -29,28 +32,26 @@ def send_run_email(
         print("Email notification skipped: smtp_user/smtp_password not resolved (missing env vars)")
         return
 
-    subject = f"[UI Automation] {summary.short_status()}"
-    body_lines = [
-        summary.short_status(),
-        "",
-        f"Report: {summary.report_html or 'n/a'}",
-        f"Run folder: {summary.run_dir or 'n/a'}",
-        f"Videos: {len(summary.video_files)}",
-    ]
-    if summary.video_files:
-        body_lines.append("Video files:")
-        for v in summary.video_files[:20]:
-            body_lines.append(f"  - {v}")
-    if summary.failure_details:
-        body_lines.extend(["", "--- Failures ---", *summary.failure_details[:10]])
-    if ai_summary:
-        body_lines.extend(["", "--- Claude analysis ---", ai_summary])
+    subject = f"[UI Automation] {summary.headline()}"
+    body_lines = [summary.headline(), ""]
+    for test in summary.problems[:10]:
+        where = f' at step "{test.last_step}"' if test.last_step else ""
+        body_lines.append(f"- {test.title}{where}: {test.message or 'no error message'}")
+    if summary.problems:
+        body_lines.append("")
+    body_lines.append("Full details are in the attached report.")
+    if summary.run_url:
+        body_lines.append(f"CI run: {summary.run_url}")
 
     msg = MIMEMultipart()
     msg["Subject"] = subject
     msg["From"] = email.from_addr
     msg["To"] = ", ".join(email.to_addrs)
     msg.attach(MIMEText("\n".join(body_lines), "plain", "utf-8"))
+    if attachment is not None and attachment.is_file():
+        part = MIMEText(attachment.read_text(encoding="utf-8"), "html", "utf-8")
+        part.add_header("Content-Disposition", "attachment", filename="ui-test-report.html")
+        msg.attach(part)
 
     # smtplib does not verify server certificates unless given a context; without this the SMTP
     # password can be intercepted by anyone able to sit between us and the mail server.
