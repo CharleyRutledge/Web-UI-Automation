@@ -9,6 +9,7 @@ on:
   push:
     paths:
       - practice_sites/**
+      - ui_automation/**
       - config/practice-sites.yaml
       - .github/workflows/practice-sites.yml
 
