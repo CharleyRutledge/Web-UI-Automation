@@ -81,7 +81,40 @@ ul.tests li:last-child { border-bottom:none; }
 .dur { color:var(--muted); font-size:13px; white-space:nowrap; }
 .foot { color:var(--muted); font-size:13px; margin-top:20px; }
 a { color:inherit; }
+ol.fixes { margin:8px 0 0; padding-left:18px; } ol.fixes > li { margin:10px 0; }
+.where code { font-size:12px; }
+.fix { margin-top:6px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.fix-head { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:4px 4px 4px 10px;
+            font-size:12px; font-weight:600; color:var(--muted); border-bottom:1px solid var(--line); }
+.fix pre { margin:0; border-radius:0; }
+pre.code { white-space:pre-wrap; overflow-wrap:anywhere; -webkit-user-select:all; user-select:all; }
+pre.current { opacity:.9; }
+button.copy { font:inherit; font-size:13px; font-weight:600; min-width:64px; min-height:32px; padding:4px 12px;
+              border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--text); cursor:pointer; }
+.note { color:var(--muted); font-size:13px; margin:6px 0 0; white-space:pre-line; }
+.js .nojs-hint { display:none; }
 """
+
+# The only script in the report: shows the Copy buttons and copies a fix. It is pinned by hash in the
+# Content-Security-Policy, so nothing else (e.g. injected through a hostile test name) could ever run.
+_COPY_JS = (
+    "document.documentElement.classList.add('js');"
+    "var s=document.getElementById('copy-status');"
+    "document.querySelectorAll('button.copy').forEach(function(b){b.hidden=false;"
+    "b.addEventListener('click',function(){"
+    "var t=document.getElementById(b.getAttribute('data-copy')).textContent;"
+    "function done(ok){b.firstChild.nodeValue=ok?'Copied':'Copy';"
+    "if(s)s.textContent=ok?'Fix copied to the clipboard':'Could not copy: press and hold the code to select it';"
+    "setTimeout(function(){b.firstChild.nodeValue='Copy';},2000);}"
+    "function fallback(){var a=document.createElement('textarea');a.value=t;a.setAttribute('readonly','');"
+    "a.style.position='fixed';a.style.opacity='0';document.body.appendChild(a);a.select();"
+    "var ok=false;try{ok=document.execCommand('copy');}catch(e){}a.remove();done(ok);}"
+    "if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t).then(function(){done(true);},fallback);}"
+    "else{fallback();}});});"
+)
+_COPY_JS_HASH = base64.b64encode(hashlib.sha256(_COPY_JS.encode()).digest()).decode()
+_CSP = ("default-src 'none'; img-src data:; media-src data:; style-src 'unsafe-inline'; "
+        f"script-src 'sha256-{_COPY_JS_HASH}'; base-uri 'none'; form-action 'none'")
 
 _DOT = {"passed": "✓", "failed": "✕", "error": "!", "skipped": "–"}
 _STATUS_TEXT = {"passed": "Passed", "failed": "Failed", "error": "Error", "skipped": "Skipped"}
@@ -231,6 +264,26 @@ def _media_card(test: TestResult, media: _Embedder, run_name: str) -> str:
 _STANDARD_LABEL = {"wcag21aa": "WCAG 2.1 AA (EN 301 549)", "wcag22aa": "WCAG 2.2 AA"}
 
 
+def _fix_block(fix: dict) -> str:
+    """One failing element: where it is, the corrected code with a Copy button, and what to check."""
+    target = fix.get("target", "")
+    code_id = "fix-" + hashlib.sha256(f"{target}|{fix.get('fix', '')}|{fix.get('html', '')}".encode()).hexdigest()[:12]
+    parts = [f'<li><div class="where"><code>{escape(target)}</code></div>']
+    if fix.get("fix"):
+        parts.append(
+            f'<div class="fix"><div class="fix-head"><span>Suggested fix</span>'
+            f'<button type="button" class="copy" data-copy="{code_id}" hidden>Copy<span class="sr-only"> fix for {escape(target)}</span></button></div>'
+            f'<pre class="code" id="{code_id}" tabindex="0" role="region" aria-label="Suggested fix for {escape(target)}">'
+            f"<code>{escape(fix['fix'])}</code></pre></div>"
+        )
+    elif fix.get("html"):
+        parts.append(f'<pre class="code current" tabindex="0" role="region" aria-label="Current code of {escape(target)}">'
+                     f"<code>{escape(fix['html'])}</code></pre>")
+    if fix.get("note"):
+        parts.append(f'<p class="note">{escape(fix["note"])}</p>')
+    return "".join(parts) + "</li>"
+
+
 def _accessibility_section(summary: RunSummary) -> str:
     scans = [scan for t in summary.tests for scan in t.accessibility]
     if not scans:
@@ -245,20 +298,33 @@ def _accessibility_section(summary: RunSummary) -> str:
         if total else f"No issues found by the automated checks on {len(scans)} page(s)."
     )
     parts.append(f'<p class="file">{escape(summary_line)} Checked with axe-core {AXE_VERSION}.</p>')
+    if any(f.get("fix") for s in scans for v in s["violations"] for f in v.get("fixes") or []):
+        parts.append('<p class="file">Each problem comes with the corrected code for that element. '
+                     '<span class="nojs-hint">Press and hold a code box to select it, then copy.</span></p>'
+                     '<div id="copy-status" class="sr-only" role="status" aria-live="polite"></div>')
     for scan_ in scans:
         issues = scan_["violations"]
         rows = []
         for v in issues:
             crit = ", ".join(v.get("criteria") or []) or "best practice"
-            where = "".join(f"<li><code>{escape(t)}</code></li>" for t in v.get("targets", [])[:3])
-            more = v.get("count", 0) - min(3, len(v.get("targets", [])))
+            fixes = v.get("fixes") or []
+            if fixes:
+                shown = fixes[:3]
+                where = "".join(_fix_block(f) for f in shown)
+                more = v.get("count", 0) - len(shown)
+                where_html = f'<ol class="fixes">{where}</ol>' + (
+                    f'<p class="file">…and {more} more element(s) with the same problem.</p>' if more > 0 else "")
+            else:  # summaries written before fixes were suggested
+                where = "".join(f"<li><code>{escape(t)}</code></li>" for t in v.get("targets", [])[:3])
+                more = v.get("count", 0) - min(3, len(v.get("targets", [])))
+                where_html = f"<ul class=\"targets\">{where}{f'<li>…and {more} more</li>' if more > 0 else ''}</ul>"
             rows.append(
                 f'<li class="issue"><span class="tag impact-{escape(v.get("impact", ""))}">{escape(v.get("impact", ""))}</span> '
                 f'<b>{escape(v.get("help", ""))}</b><div class="file">WCAG {escape(crit)} · '
                 f'{v.get("count", 0)} element(s)'
-                + (f' · <a href="{escape(v["help_url"])}">How to fix<span class="sr-only"> {escape(v.get("help", ""))}</span></a>'
+                + (f' · <a href="{escape(v["help_url"])}">Why this matters<span class="sr-only">: {escape(v.get("help", ""))}</span></a>'
                    if v.get("help_url", "").startswith("https://") else "")
-                + f"</div><ul class=\"targets\">{where}{f'<li>…and {more} more</li>' if more > 0 else ''}</ul></li>"
+                + f"</div>{where_html}</li>"
             )
         body = f'<ul class="issues">{"".join(rows)}</ul>' if rows else '<p class="ok-text">No issues found by the automated checks.</p>'
         parts.append(
@@ -376,6 +442,7 @@ def render_summary_html(summary: RunSummary, ai_text: str | None = None) -> str:
     return (
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f'<meta http-equiv="Content-Security-Policy" content="{_CSP}">'
         f"<title>UI tests: {title}</title><style>{_CSS}</style></head>"
-        f"<body><main>{''.join(parts)}</main></body></html>"
+        f"<body><main>{''.join(parts)}</main><script>{_COPY_JS}</script></body></html>"
     )

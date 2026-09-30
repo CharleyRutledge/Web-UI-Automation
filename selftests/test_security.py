@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import re
 from pathlib import Path
 
@@ -44,7 +46,13 @@ def test_summary_report_loads_nothing_from_the_internet(hostile_run: CliRun) -> 
     # CI run, trace.playwright.dev or "How to fix" pages load nothing until the reader chooses to follow them.
     loaded = [s for s in re.findall(r'\bsrc="([^"]+)"', html) if not s.startswith("data:")]
     assert loaded == [], loaded
-    assert "<script" not in html.lower() and "<link" not in html.lower() and "@import" not in html
+    assert "<link" not in html.lower() and "@import" not in html
+    # Exactly one script (the Copy buttons), inline, and the only one the page's CSP allows to run.
+    scripts = re.findall(r"<script([^>]*)>(.*?)</script>", html, re.S | re.I)
+    assert len(scripts) == 1 and scripts[0][0] == "", scripts
+    digest = base64.b64encode(hashlib.sha256(scripts[0][1].encode()).digest()).decode()
+    csp = re.search(r'http-equiv="Content-Security-Policy" content="([^"]+)"', html).group(1)
+    assert f"script-src 'sha256-{digest}'" in csp and "default-src 'none'" in csp
     assert "url(" not in html.split("</style>")[0].split("<style>")[-1], "no external CSS resources"
 
 
@@ -52,6 +60,36 @@ def test_hostile_ai_text_is_escaped(tmp_path: Path) -> None:
     s, _ = make_summary(tmp_path)
     html = render_summary_html(s, ai_text="<script>steal()</script> & <b>bold</b>")
     assert "<script>steal()" not in html and "&lt;script&gt;steal()" in html
+
+
+def test_hostile_markup_in_a_fix_is_shown_not_run(tmp_path: Path) -> None:
+    """Fixes quote the site's own HTML, which could be anything."""
+    from ui_automation.accessibility import Violation
+
+    s, _ = make_summary(tmp_path)
+    raw = {"id": "image-alt", "impact": "critical", "help": "Images must have alternative text", "tags": ["wcag111"],
+           "nodes": [{"html": '<img src=x onerror="alert(7)"><script>alert(6)</script>', "target": ["img"]}]}
+    s.tests[0].accessibility = [{"url": "http://x/", "standard": "wcag21aa", "violations": [Violation.from_axe(raw).__dict__]}]
+    html = render_summary_html(s)
+    assert 'onerror="alert(7)"' not in html and "<script>alert(6)" not in html
+    assert "onerror=&quot;alert(7)&quot;" in html
+
+
+def test_injected_script_would_be_blocked_by_the_csp(tmp_path: Path) -> None:
+    """Defence in depth: even if escaping ever failed, the browser refuses to run anything but our script."""
+    from playwright.sync_api import sync_playwright
+
+    s, _ = make_summary(tmp_path)
+    html = render_summary_html(s).replace("</main>", "<script>document.title='pwned'</script></main>")
+    page_file = tmp_path / "injected.html"
+    page_file.write_text(html, encoding="utf-8")
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+        assert page.title() != "pwned"
+        assert page.evaluate("document.documentElement.classList.contains('js')"), "our own script still runs"
+        browser.close()
 
 
 def test_hostile_media_paths_cannot_escape_the_page(tmp_path: Path) -> None:

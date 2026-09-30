@@ -36,7 +36,7 @@ Invoke-Item .\reports\latest\report.html
 scanned in the real browser with [axe-core](https://github.com/dequelabs/axe-core) 4.13 (vendored, checksum
 verified). The default standard is **WCAG 2.1 AA**, the level EN 301 549 requires under the EU Web
 Accessibility Directive (S.I. 358/2020) and the European Accessibility Act; `wcag22aa` adds the WCAG 2.2
-criteria. Each issue is reported with its WCAG success criterion, examples and a fix link, and the test fails
+criteria. Each issue is reported with its WCAG success criterion, the failing elements and, for each one, the corrected code (markup or CSS) with a Copy button, and the test fails
 at `fail_on` severity (`none` = report only). Automated rules cannot prove conformance: the report lists what
 still needs a person to check, following the W3C WCAG-EM method (scope, explore, sample, audit, report).
 The report and dashboard themselves are tested against WCAG 2.2 AA (axe, keyboard, focus, 320 px reflow).

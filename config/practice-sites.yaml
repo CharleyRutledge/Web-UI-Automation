@@ -1,0 +1,37 @@
+# Settings for the public practice-site suite (practice_sites/). Run it with:
+#   python -m ui_automation --config config/practice-sites.yaml -- practice_sites
+base_url: "https://the-internet.herokuapp.com"
+browser: chromium
+headless: true
+timeout_ms: 30000
+
+viewport:
+  width: 1280
+  height: 720
+
+screenshot_full_page: false  # some of these pages are very long; the viewport is enough
+
+artifacts:
+  video: on
+  tracing: retain-on-failure
+  navigation_wait_until: domcontentloaded
+
+ai:
+  enabled: true
+  model: claude-sonnet-5-5
+  max_tokens: 2048
+
+# Other people's sites: record every WCAG 2.1 AA finding in the report, but don't fail on them.
+accessibility:
+  enabled: true
+  standard: wcag21aa
+  fail_on: none
+
+compliance:
+  enabled: false
+
+notifications:
+  telegram:
+    enabled: true
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    chat_id: "${TELEGRAM_CHAT_ID}"

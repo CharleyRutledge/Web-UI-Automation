@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ui_automation.accessibility.fixes import suggest
+
 AXE_VERSION = "4.13.0"
 _AXE_SHA256 = "c24f097bd2f451d4f933e8bc7d8d539f8672a2ebcb5cc9f9f3eec8ca9470a0c1"
 _AXE_PATH = Path(__file__).with_name("vendor") / "axe.min.js"
@@ -66,6 +68,7 @@ class Violation:
     criteria: list[str]
     targets: list[str] = field(default_factory=list)
     count: int = 0
+    fixes: list[dict] = field(default_factory=list)  # per element: target, html, fix (copy-pasteable), note
 
     @classmethod
     def from_axe(cls, raw: dict[str, Any]) -> Violation:
@@ -78,6 +81,7 @@ class Violation:
             criteria=_criteria(raw.get("tags") or []),
             targets=[" ".join(map(str, n.get("target", []))) for n in nodes[:5]],
             count=len(nodes),
+            fixes=[suggest(raw.get("id", ""), n) for n in nodes[:5]],
         )
 
 
@@ -86,7 +90,9 @@ def scan(page: Any, standard: str = "wcag21aa") -> list[Violation]:
     if standard not in STANDARDS:
         raise ValueError(f"accessibility standard must be one of {sorted(STANDARDS)}")
     if not page.evaluate("() => typeof window.axe !== 'undefined'"):
-        page.add_script_tag(content=axe_source())
+        # Evaluated through the DevTools protocol rather than a <script> tag, which a site's
+        # Content-Security-Policy would block (the scan must also work on well-secured sites).
+        page.evaluate(axe_source() + "\n;void 0")
     result = page.evaluate(
         "tags => axe.run(document, {runOnly: {type: 'tag', values: tags}, resultTypes: ['violations']})",
         STANDARDS[standard],
