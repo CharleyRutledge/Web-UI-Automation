@@ -71,8 +71,8 @@ def check_running(url: str, timeout: float = 5.0) -> str:
     where = urlparse(url)
     message = f"Nothing is answering at {where.scheme}://{where.netloc} ({problem})."
     if os.environ.get("GITHUB_ACTIONS") == "true" and is_local(url):
-        return (message + " On GitHub, 'localhost' means GitHub's own machine, not your computer: run local "
-                "apps from your computer with python -m ui_automation --url ...")
+        return (message + " On GitHub, 'localhost' means GitHub's own machine, not your computer: start the app "
+                "there with --start \"<command>\", or run the tests from your computer.")
     return message + " Start the app first, or let the tests start it with --start \"<command>\"."
 
 

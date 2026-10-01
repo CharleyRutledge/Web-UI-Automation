@@ -50,7 +50,9 @@ def _app_folder(tmp_path: Path) -> Path:
 
 def test_app_not_running_is_explained_and_nothing_runs(tmp_path: Path) -> None:
     port = free_port()
-    run = invoke_cli(tmp_path, ["scenarios/test_quick.py"], config=base_config(f"http://localhost:{port}"))
+    # As on your own computer (CI sets GITHUB_ACTIONS, which switches to the GitHub wording tested below).
+    run = invoke_cli(tmp_path, ["scenarios/test_quick.py"], config=base_config(f"http://localhost:{port}"),
+                     env={"GITHUB_ACTIONS": "false"})
     assert run.returncode == 2 and run.run_dir is None
     assert f"Nothing is answering at http://localhost:{port}" in run.output
     assert '--start "<command>"' in run.output
@@ -60,6 +62,7 @@ def test_on_github_localhost_is_explained(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     message = check_running(f"http://localhost:{free_port()}")
     assert "'localhost' means GitHub's own machine, not your computer" in message
+    assert '--start "<command>"' in message
 
 
 def test_start_runs_the_app_tests_it_and_stops_it(tmp_path: Path) -> None:
