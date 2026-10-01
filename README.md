@@ -94,6 +94,16 @@ python -m ui_automation --config config/meridian-data.yaml --url http://localhos
 python -m ui_automation --config config/meridian-data.yaml --start "npm run dev" --start-in ../meridian-data -- site_audit
 ```
 
+- Apps in **Docker**: a start command that runs in the background (`docker compose up -d --wait`) is
+  fine. Give it a stop command (`--stop "docker compose down"`) to shut the app down after the tests.
+- Save the commands in the settings file instead of typing them each time:
+  ```yaml
+  app:
+    start: "docker compose up -d --wait"
+    stop: "docker compose down"
+    start_in: "C:/Users/me/meridian-data"
+  ```
+  If the app is already running, it is tested as it is and left running. `--no-start` never starts it.
 - If nothing is answering at the address, the app says so and stops. It runs no tests and creates no
   empty report.
 - With `--start`, the app's own output is saved as `app-server.log` in the run folder. If the app fails

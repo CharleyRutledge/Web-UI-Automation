@@ -71,19 +71,29 @@ def check_running(url: str, timeout: float = 5.0) -> str:
     where = urlparse(url)
     message = f"Nothing is answering at {where.scheme}://{where.netloc} ({problem})."
     if os.environ.get("GITHUB_ACTIONS") == "true" and is_local(url):
-        return (message + " On GitHub, 'localhost' means GitHub's own machine, not your computer: run local "
-                "apps from your computer with python -m ui_automation --url ...")
+        return (message + " On GitHub, 'localhost' means GitHub's own machine, not your computer: start the app "
+                "there with --start \"<command>\", or run the tests from your computer.")
     return message + " Start the app first, or let the tests start it with --start \"<command>\"."
 
 
 class AppServer:
-    """Runs the app's start command in its own process group and stops all of it afterwards."""
+    """Starts the app and stops it afterwards.
+
+    Two kinds of start command work:
+    - one that keeps running (npm run dev, python app.py): it runs in its own process group, and stopping
+      ends the whole group;
+    - one that starts the app in the background and finishes (docker compose up -d): exiting with code 0 is
+      fine, the URL is then waited for, and `stop_command` (docker compose down) stops the app afterwards.
+    """
 
     def __init__(self, command: str, url: str, *, timeout: float = 120.0, cwd: Path | None = None,
-                 log: Path | None = None) -> None:
+                 log: Path | None = None, stop_command: str | None = None) -> None:
         self.command, self.url, self.timeout, self.cwd, self.log = command, url, timeout, cwd, log
+        self.stop_command = stop_command
         self.process: subprocess.Popen | None = None
+        self.stop_problem = ""  # set when the stop command fails
         self._log_file = None
+        self._started = False
 
     def start(self) -> str:
         """Start and wait until the app answers. '' when ready, otherwise what went wrong (it is stopped)."""
@@ -98,13 +108,17 @@ class AppServer:
             kwargs["start_new_session"] = True  # its own process group: npm -> node -> ... all stop together
         # The user's own start command (like an npm script), run on their machine: a shell is what they expect.
         self.process = subprocess.Popen(self.command, shell=True, **kwargs)  # noqa: S602  # nosec B602
+        self._started = True
         deadline = time.monotonic() + self.timeout
         while time.monotonic() < deadline:
-            if self.process.poll() is not None:
+            if self.process is not None and self.process.poll() is not None:
                 code = self.process.returncode
-                self.stop()
-                return (f"The start command exited (code {code}) before {self.url} answered"
-                        + (f"; its output is in {self.log}" if self.log else "") + ".")
+                if code == 0:
+                    self.process = None  # it started the app in the background (docker compose up -d): keep waiting
+                else:
+                    self.stop()
+                    return (f"The start command exited (code {code}) before {self.url} answered"
+                            + (f"; its output is in {self.log}" if self.log else "") + ".")
             if not _probe(self.url, 2.0):
                 return ""
             time.sleep(0.5)
@@ -130,6 +144,22 @@ class AppServer:
                     proc.wait(timeout=5)
                 except (OSError, subprocess.TimeoutExpired):
                     pass
+        if self.stop_command and self._started:
+            self._started = False
+            self.stop_problem = self._run_stop_command()
         if self._log_file:
             self._log_file.close()
             self._log_file = None
+
+    def _run_stop_command(self) -> str:
+        out = self._log_file or subprocess.DEVNULL
+        if self._log_file:
+            self._log_file.write(f"\n--- stop: {self.stop_command}\n".encode())
+            self._log_file.flush()
+        try:
+            # The user's own stop command (docker compose down), run on their machine.
+            done = subprocess.run(self.stop_command, shell=True, cwd=self.cwd, stdout=out,  # noqa: S602  # nosec B602
+                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=120, check=False)
+        except subprocess.TimeoutExpired:
+            return f"the stop command {self.stop_command!r} did not finish within 120 s"
+        return "" if done.returncode == 0 else f"the stop command {self.stop_command!r} exited with code {done.returncode}"

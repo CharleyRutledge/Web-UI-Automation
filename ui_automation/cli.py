@@ -187,9 +187,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--start-timeout",
         type=float,
-        default=120.0,
+        default=None,
         metavar="SECONDS",
-        help="How long to wait for the app to answer after --start (default: 120).",
+        help="How long to wait for the app to answer after --start (default: app.start_timeout, 120).",
+    )
+    parser.add_argument(
+        "--stop",
+        default=None,
+        metavar="COMMAND",
+        help='Command that stops the app after the tests, e.g. --stop "docker compose down".',
+    )
+    parser.add_argument(
+        "--no-start",
+        action="store_true",
+        help="Don't start the app, even if the settings file says how (test the one already running).",
     )
     parser.add_argument(
         "--config",
@@ -242,7 +253,17 @@ def main(argv: list[str] | None = None) -> int:
 
     from ui_automation.local import AppServer, check_running, is_local
 
-    if not args.start and is_local(settings.base_url):
+    # The command line wins over the settings file's app: section.
+    start_cmd = args.start or ("" if args.no_start else settings.app.start)
+    stop_cmd = args.stop if args.stop is not None else settings.app.stop
+    start_in = args.start_in or settings.app.start_in
+    start_timeout = args.start_timeout if args.start_timeout is not None else float(settings.app.start_timeout)
+    if start_cmd and not check_running(settings.base_url, timeout=3.0):
+        # Started by hand already: test it as it is, and don't stop what we didn't start.
+        print(f"The app is already running at {settings.base_url}: testing it as it is (not starting or stopping it).")
+        start_cmd = stop_cmd = ""
+
+    if not start_cmd and is_local(settings.base_url):
         # An app on this computer that is not running would fail every test with browser errors: say so plainly.
         problem = check_running(settings.base_url)
         if problem:
@@ -284,17 +305,19 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Video mode: {settings.video_mode}")
 
     server: AppServer | None = None
-    if args.start:
-        start_dir = Path(args.start_in).expanduser().resolve() if args.start_in else Path.cwd()
+    if start_cmd:
+        start_dir = Path(start_in).expanduser().resolve() if start_in else Path.cwd()
         if not start_dir.is_dir():
-            print(f"--start-in: {start_dir} is not a folder", file=sys.stderr)
+            print(f"start folder (--start-in / app.start_in): {start_dir} is not a folder", file=sys.stderr)
             return 2
-        print(f"Starting the app: {args.start} (in {start_dir}); waiting for {settings.base_url} ...")
-        server = AppServer(args.start, settings.base_url, timeout=args.start_timeout, cwd=start_dir,
-                           log=run_dir / "app-server.log")
+        print(f"Starting the app: {start_cmd} (in {start_dir}); waiting for {settings.base_url} ...")
+        server = AppServer(start_cmd, settings.base_url, timeout=start_timeout, cwd=start_dir,
+                           log=run_dir / "app-server.log", stop_command=stop_cmd or None)
         problem = server.start()
         if problem:
             print(f"Could not start the app: {problem}", file=sys.stderr)
+            if server.stop_problem:
+                print(f"Also: {server.stop_problem}", file=sys.stderr)
             return 2
         print(f"The app is up at {settings.base_url}.")
 
@@ -303,7 +326,10 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if server is not None:
             server.stop()
-            print("Stopped the app.")
+            if server.stop_problem:
+                print(f"Could not stop the app cleanly: {server.stop_problem}", file=sys.stderr)
+            else:
+                print("Stopped the app.")
 
     # pytest has exited, so report.html and summary.json are complete: now analyse and notify.
     from ui_automation.reporting.pipeline import notify_run
