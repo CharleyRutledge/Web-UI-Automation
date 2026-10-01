@@ -43,7 +43,16 @@ jobs:
           # Only settings files from this repository's config/ folder.
           case "$SITE_CONFIG" in config/*.yaml) ;; *) echo "config must be config/<name>.yaml"; exit 2;; esac
           case "$SITE_CONFIG" in *..*) echo "config must be config/<name>.yaml"; exit 2;; esac
-          python -m ui_automation --config "$SITE_CONFIG" -- site_audit tests/test_compliance.py
+          # Exit 1 means the audit ran and found problems on the site: that is the report's job, so the
+          # workflow stays green with a warning. Anything else (crash, bad config, no tests) fails it.
+          code=0
+          python -m ui_automation --config "$SITE_CONFIG" -- site_audit tests/test_compliance.py || code=$?
+          if [ "$code" -eq 1 ]; then
+            failed=$(python -c "import json,glob; d=json.load(open(sorted(glob.glob('reports/2*/summary.json'))[-1])); print(d['failed'] + d['errors'], 'of', d['total'])")
+            echo "::warning title=Site audit findings::$failed checks found problems on the site. See the report (Telegram or the site-audit-report artifact)."
+          elif [ "$code" -ne 0 ]; then
+            exit "$code"
+          fi
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

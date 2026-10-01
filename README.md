@@ -69,6 +69,8 @@ python -m ui_automation --config config/statespend.yaml -- site_audit tests/test
 
 To audit another site, copy `config/statespend.yaml`, change `base_url`, and run it the same way. In GitHub,
 go to **Actions → Site audit → Run workflow** and enter the config file. statespend.ie is audited weekly.
+Problems found on the site show as a warning on a green run (the report is the result); the run fails
+only when the audit itself could not run.
 
 ## Testing the framework itself
 
