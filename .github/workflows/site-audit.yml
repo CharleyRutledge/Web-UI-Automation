@@ -1,21 +1,15 @@
 name: Site audit
 
-# Whole-site audit (site_audit/, including the Irish/EU website requirements) of the site in a config file.
-# Weekly for statespend.ie; any other config/<site>.yaml can be run on demand.
+# Whole-site audit (site_audit/, including the Irish/EU website requirements) of a website you name.
+# Only ever runs when started by hand (Actions -> Site audit -> Run workflow) with a URL: no schedule,
+# no runs on push, no default site.
 on:
-  schedule:
-    - cron: "37 6 * * 1"   # weekly, Mondays (UTC)
   workflow_dispatch:
     inputs:
-      config:
-        description: Settings file for the site to audit
-        default: config/statespend.yaml
-  push:
-    paths:
-      - site_audit/**
-      - ui_automation/**
-      - config/statespend.yaml
-      - .github/workflows/site-audit.yml
+      url:
+        description: Website to audit (https://...)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -31,7 +25,7 @@ jobs:
     timeout-minutes: 40
     env:
       CI: true
-      SITE_CONFIG: ${{ inputs.config || 'config/statespend.yaml' }}
+      SITE_URL: ${{ inputs.url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -45,13 +39,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Audit the site
         run: |
-          # Only settings files from this repository's config/ folder.
-          case "$SITE_CONFIG" in config/*.yaml) ;; *) echo "config must be config/<name>.yaml"; exit 2;; esac
-          case "$SITE_CONFIG" in *..*) echo "config must be config/<name>.yaml"; exit 2;; esac
+          # The URL arrives in an environment variable (never pasted into the script) and is checked again
+          # by the app, which refuses anything that is not http(s)://.
           # Exit 1 means the audit ran and found problems on the site: that is the report's job, so the
           # workflow stays green with a warning. Anything else (crash, bad config, no tests) fails it.
           code=0
-          python -m ui_automation --config "$SITE_CONFIG" -- site_audit || code=$?
+          python -m ui_automation --config config/site-audit.yaml --url "$SITE_URL" -- site_audit || code=$?
           if [ "$code" -eq 1 ]; then
             failed=$(python -c "import json,glob; d=json.load(open(sorted(glob.glob('reports/2*/summary.json'))[-1])); print(d['failed'] + d['errors'], 'of', d['total'])")
             echo "::warning title=Site audit findings::$failed checks found problems on the site. See the report (Telegram or the site-audit-report artifact)."

@@ -1,0 +1,49 @@
+# Whole-site audit of any website: give it the address with --url (the Site audit workflow does).
+#   python -m ui_automation --config config/site-audit.yaml --url https://example.ie -- site_audit
+base_url: "https://example.com"  # replaced by --url; the report is named after that site
+browser: chromium
+headless: true
+timeout_ms: 30000
+
+viewport:
+  width: 1280
+  height: 720
+
+screenshot_full_page: false
+
+artifacts:
+  video: on
+  tracing: retain-on-failure
+  navigation_wait_until: domcontentloaded
+
+ai:
+  enabled: true
+  model: claude-sonnet-5-5
+  max_tokens: 2048
+
+# Every page found is scanned; findings (with copyable fixes) are listed in the report.
+# fail_on: none only reports them. Use serious for your own site, so problems fail their check.
+accessibility:
+  enabled: true
+  standard: wcag21aa
+  fail_on: none
+
+# Irish / EU website requirements, checked on the home page before any cookie consent is given.
+compliance:
+  enabled: true
+  report_only: false  # problems fail their check (the run still ends green with a warning)
+  pages:
+    - /
+  # company_details is left out because not every site is run by a company; add it for company sites.
+  checks: [privacy_notice, cookie_consent, accessibility_statement, contact_details]
+
+audit:
+  max_pages: 20
+  load_budget_ms: 5000
+  check_external_links: true
+
+notifications:
+  telegram:
+    enabled: true
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    chat_id: "${TELEGRAM_CHAT_ID}"

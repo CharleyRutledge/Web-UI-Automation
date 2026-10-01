@@ -1,17 +1,9 @@
 name: Practice sites
 
-# The public automation-practice websites (practice_sites/). They are other people's sites, so this
-# runs weekly and on demand instead of gating pull requests.
+# The public automation-practice websites (practice_sites/). Only runs when started by hand
+# (Actions -> Practice sites -> Run workflow): no schedule, no runs on push.
 on:
-  schedule:
-    - cron: "29 6 * * 1"   # weekly, Mondays (UTC)
   workflow_dispatch:
-  push:
-    paths:
-      - practice_sites/**
-      - ui_automation/**
-      - config/practice-sites.yaml
-      - .github/workflows/practice-sites.yml
 
 permissions:
   contents: read

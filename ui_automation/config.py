@@ -317,7 +317,11 @@ def load_settings(path: str | Path | None = None) -> Settings:
     raw = resolve_env(parsed)
     m = _as_mapping(raw)
 
-    base_url = str(m.get("base_url") or "").strip().rstrip("/")
+    # WEB_UI_URL (set by `python -m ui_automation --url ...`) tests that site instead of the file's base_url;
+    # the run is then named after it too, not after the site the file was written for.
+    url_override = os.environ.get("WEB_UI_URL", "").strip()
+    base_url = (url_override or str(m.get("base_url") or "")).strip().rstrip("/")
+    name_raw = None if url_override else m.get("name")
     if not base_url:
         raise ValueError("settings.yaml: base_url is required")
     if not re.match(r"^https?://[^/\s]+", base_url, re.IGNORECASE):
@@ -345,7 +349,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         accessibility=_load_accessibility(_section(m, "accessibility")),
         compliance=_load_compliance(_section(m, "compliance")),
         audit=_load_audit(_section(m, "audit")),
-        name=_load_name(m.get("name"), base_url),
+        name=_load_name(name_raw, base_url),
         notifications=NotificationSettings(
             email=_load_email(_section(notif_raw, "email")),
             telegram=_load_telegram(_section(notif_raw, "telegram")),

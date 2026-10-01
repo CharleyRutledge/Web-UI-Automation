@@ -66,13 +66,19 @@ home page first, up to `audit.max_pages`. Every page found is then checked for:
 Each test lists every problem it finds, not just the first.
 
 ```bash
-python -m ui_automation --config config/statespend.yaml -- site_audit
+python -m ui_automation --config config/site-audit.yaml --url https://example.ie -- site_audit
 ```
 
-To audit another site, copy `config/statespend.yaml`, change `base_url`, and run it the same way. In GitHub,
-go to **Actions → Site audit → Run workflow** and enter the config file. statespend.ie is audited weekly.
-Problems found on the site show as a warning on a green run (the report is the result); the run fails
-only when the audit itself could not run.
+`--url` works with any settings file and names the report after that site. In GitHub, go to
+**Actions → Site audit → Run workflow** and type the website's address. Problems found on the site show
+as a warning on a green run (the report is the result); the run fails only when the audit itself
+could not run.
+
+**Nothing runs on its own.** No suite is scheduled, and none that visits a website or sends a report
+runs on push. The site audit, the practice sites, the playwright.dev browser suite and the load and live
+checks only run when you start them in **Actions** (the site audit only with the URL you type). The
+self-tests and security scan still run on every push and pull request; they use local test servers and
+send nothing.
 
 ## Testing the framework itself
 
@@ -83,9 +89,9 @@ TLS, login), and local stand-ins for the Telegram and Anthropic APIs, used for t
 
 ```powershell
 python -m pip install -r requirements-dev.txt
-python -m pytest -c selftests/pytest.ini selftests            # every push and weekly in CI (~2.5 min)
-python -m pytest -c selftests/pytest.ini selftests -m load -s # weekly: load / performance numbers
-python -m pytest -c selftests/pytest.ini selftests -m live    # weekly: real Claude + Telegram (needs secrets)
+python -m pytest -c selftests/pytest.ini selftests            # every push and pull request in CI (~3 min)
+python -m pytest -c selftests/pytest.ini selftests -m load -s # by hand (Actions -> Extended tests): load / performance numbers
+python -m pytest -c selftests/pytest.ini selftests -m live    # by hand (Actions -> Extended tests): real Claude + Telegram
 ```
 
 | Area | What is covered |

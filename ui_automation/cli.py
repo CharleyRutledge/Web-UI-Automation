@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -167,6 +168,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Port for --ui (default: 8501).",
     )
     parser.add_argument(
+        "--url",
+        default=None,
+        help="Website to test (overrides base_url in the settings file), e.g. --url https://example.ie",
+    )
+    parser.add_argument(
         "--config",
         dest="config",
         default=None,
@@ -197,6 +203,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.config:
         # The tests run with cwd=root, so a config path relative to the caller's cwd must be absolutized.
         args.config = str(Path(args.config).expanduser().resolve())
+    if args.url is not None:
+        url = args.url.strip()
+        if not re.match(r"^https?://[^/\s]+\S*$", url, re.IGNORECASE):
+            print(f"Invalid --url {args.url!r}: it must start with http:// or https://", file=sys.stderr)
+            return 2
+        os.environ["WEB_UI_URL"] = url  # read by load_settings, here and in the pytest run
     try:
         settings = load_settings(args.config)
     except (OSError, ValueError) as exc:

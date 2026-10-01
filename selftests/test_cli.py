@@ -223,3 +223,17 @@ def test_latest_is_published_safely_by_simultaneous_runs(tmp_path: Path) -> None
     assert len({(latest / n).read_text() for n in ("report.html", "summary.json", "summary.html")}) == 1
     assert len(list((latest / "videos").iterdir())) == 20
     assert [p.name for p in reports.iterdir() if p.name.startswith(".")] == [], "no staging/lock leftovers"
+
+
+def test_url_option_tests_that_site_and_names_the_report_after_it(run_cli, site) -> None:
+    cfg = base_config("https://not-this-site.example", name="Configured name")
+    r = run_cli(["scenarios/test_quick.py"], config=cfg, cli_args=["--url", site.url])
+    assert r.returncode == 0, r.output
+    assert r.summary["base_url"] == site.url.rstrip("/")
+    assert r.summary["name"] == site.url.split("://", 1)[1].rstrip("/")  # not the file's name
+
+
+@pytest.mark.parametrize("url", ["statespend.ie", "ftp://x.ie", "javascript:alert(1)", "https://", "https://a b.ie", ""])
+def test_url_option_rejects_non_web_addresses(run_cli, url: str) -> None:
+    r = run_cli(["scenarios/test_quick.py"], cli_args=["--url", url])
+    assert r.returncode == 2 and "must start with http:// or https://" in r.output and r.run_dir is None
