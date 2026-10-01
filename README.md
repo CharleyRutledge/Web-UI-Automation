@@ -153,7 +153,7 @@ TLS, login), and local stand-ins for the Telegram and Anthropic APIs, used for t
 
 ```powershell
 python -m pip install -r requirements-dev.txt
-python -m pytest -c selftests/pytest.ini selftests            # every push and pull request in CI (~3 min)
+python -m pytest -c selftests/pytest.ini selftests -n auto    # every push and pull request in CI (~3 min on 4 cores)
 python -m pytest -c selftests/pytest.ini selftests -m load -s # by hand (Actions -> Extended tests): load / performance numbers
 python -m pytest -c selftests/pytest.ini selftests -m live    # by hand (Actions -> Extended tests): real Claude + Telegram
 ```

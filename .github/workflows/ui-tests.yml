@@ -113,7 +113,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: Run self-tests
-        run: python -m pytest -c selftests/pytest.ini selftests -p no:cacheprovider
+        # -n auto: one worker per CPU core (each test starts its own servers on free ports and works in its own
+        # temporary folder, so they run side by side safely).
+        run: python -m pytest -c selftests/pytest.ini selftests -p no:cacheprovider -n auto
 
   security:
     runs-on: ubuntu-latest
