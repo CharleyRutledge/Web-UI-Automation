@@ -44,6 +44,9 @@ MANUAL_CHECKS = (
 
 def axe_source() -> str:
     data = _AXE_PATH.read_bytes()
+    # Git on Windows may have turned the file's LF line endings into CRLF on checkout (older clones,
+    # before .gitattributes). That changes no code, so the checksum is taken over LF endings.
+    data = data.replace(b"\r\n", b"\n")
     if hashlib.sha256(data).hexdigest() != _AXE_SHA256:
         raise RuntimeError(f"{_AXE_PATH} does not match axe-core {AXE_VERSION}; refusing to inject it")
     return data.decode("utf-8")

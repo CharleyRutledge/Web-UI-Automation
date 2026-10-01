@@ -1,0 +1,3 @@
+# Vendored third-party files are checked by checksum: Git must never change their bytes
+# (e.g. turn LF into CRLF on Windows checkouts).
+ui_automation/accessibility/vendor/** -text
