@@ -22,6 +22,12 @@ USERNAME_SELECTORS = (
     "input[type='text']",
 )
 SUBMIT_NAMES = re.compile(r"^\s*(log\s*-?\s*in|sign\s*-?\s*in|continue|next|submit|enter)\b", re.I)
+# Where login forms show why a login failed.
+MESSAGE_SELECTORS = ("[role='alert']", "[aria-live]", "[role='status']", ".error", ".alert", "[class*='error' i]",
+                     "[class*='toast' i]", "[data-sonner-toast]")
+ERROR_WORDS = re.compile(r"invalid|incorrect|wrong|not (found|recogni[sz]ed|verified|confirmed)|failed|error|locked|"
+                         r"too many|try again|disabled|denied|unauthori[sz]ed|verify|confirm your", re.I)
+LOGIN_WAIT_MS = 15_000  # a login can take a while: password hashing, then a redirect
 
 
 class LoginError(Exception):
@@ -99,6 +105,50 @@ def _logged_in(page: Page, auth: AuthSettings, login_url: str) -> bool:
     return _password_box(page, auth) is None
 
 
+def _page_message(page: Page, secrets: tuple[str, ...]) -> str:
+    """What the login page says about the failure (an error box or alert), with the credentials removed."""
+    texts: list[str] = []
+    for selector in MESSAGE_SELECTORS:
+        loc = page.locator(selector)
+        try:
+            for i in range(min(loc.count(), 5)):
+                if loc.nth(i).is_visible():
+                    texts.append(loc.nth(i).inner_text(timeout=1_000))
+        except PlaywrightError:
+            continue
+    if not any(t.strip() for t in texts):
+        try:
+            texts.append(page.get_by_text(ERROR_WORDS).first.inner_text(timeout=1_000))
+        except PlaywrightError:
+            pass
+    message = ""
+    for text in texts:
+        text = " ".join(text.split())
+        if text and text not in message:
+            message = f"{message} / {text}" if message else text
+    for secret in secrets:
+        if secret:
+            message = message.replace(secret, "***")
+    return message[:200] + ("..." if len(message) > 200 else "")
+
+
+def _wait_until_logged_in(page: Page, auth: AuthSettings, login_url: str, timeout_ms: int) -> bool:
+    """Wait for the logged-in sign; stop early when the page shows an error (like "wrong password") instead."""
+    page.wait_for_timeout(500)
+    _settle(page)
+    waited = 0
+    while True:
+        try:
+            if _logged_in(page, auth, login_url):
+                return True
+        except PlaywrightError:
+            pass  # the page is navigating: look again
+        if waited >= timeout_ms or ERROR_WORDS.search(_page_message(page, ())):
+            return False
+        page.wait_for_timeout(250)
+        waited += 250
+
+
 def log_in(browser: Browser, settings: Settings, role: RoleSettings) -> dict[str, Any]:
     """Log in as `role` and return the session (Playwright storage state). Raises LoginError."""
     check_credentials(role)
@@ -132,13 +182,24 @@ def log_in(browser: Browser, settings: Settings, role: RoleSettings) -> dict[str
                 raise LoginError(f"role '{role.name}': after entering the username, no password box appeared") from None
             password = _password_box(page, auth)
         password.fill(role.password)  # type: ignore[union-attr]
+        # An app that is still starting up (hydrating) can empty the boxes again: fill them once more if so.
+        page.wait_for_timeout(300)
+        for box, value in ((user_box, role.username), (password, role.password)):
+            try:  # (in a two-step login the username box is on the previous screen: nothing to check)
+                if box is not None and box.is_visible() and box.input_value(timeout=2_000) != value:
+                    box.fill(value)
+            except PlaywrightError:
+                pass
         _submit(page, auth, password)  # type: ignore[arg-type]
-        page.wait_for_timeout(500)
-        _settle(page)
-        if not _logged_in(page, auth, login_url):
-            hint = ("check the username and password in .env" if not auth.logged_in_check
-                    else f"auth.logged_in_check ({auth.logged_in_check!r}) was not found")
-            raise LoginError(f"role '{role.name}': login did not succeed (still on {urlparse(page.url).path or '/'}); {hint}")
+        if not _wait_until_logged_in(page, auth, login_url, LOGIN_WAIT_MS):
+            said = _page_message(page, (role.password, role.username))
+            where = urlparse(page.url).path or "/"
+            reason = (f"the page said: \"{said}\"" if said else
+                      "the page showed no error message, so check the username and password in .env "
+                      "by signing in by hand")
+            check = (f" (auth.logged_in_check {auth.logged_in_check!r} was not found)"
+                     if auth.logged_in_check else "")
+            raise LoginError(f"role '{role.name}': login did not succeed, still on {where}{check}; {reason}")
         return context.storage_state()
     finally:
         context.close()

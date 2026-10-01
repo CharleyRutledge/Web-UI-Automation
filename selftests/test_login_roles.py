@@ -206,7 +206,8 @@ def test_wrong_password_fails_that_role_clearly(tmp_path: Path, app: App) -> Non
     assert run.test("test_crawl_found_the_site[admin-")["outcome"] == "passed"
     t = run.test("test_crawl_found_the_site[viewer-")
     assert t["outcome"] == "error"  # the role's checks could not run at all
-    assert "Could not log in: role 'viewer': login did not succeed" in t["message"]
+    assert "Could not log in: role 'viewer': login did not succeed, still on /login" in t["message"]
+    assert 'the page said: "Wrong email or password"' in t["message"]  # why, in the app's own words
     assert "not-the-password" not in run.output + t["message"]
 
 
