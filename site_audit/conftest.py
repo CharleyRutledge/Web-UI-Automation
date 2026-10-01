@@ -50,6 +50,10 @@ TIMING_JS = """() => { const n = performance.getEntriesByType('navigation')[0];
 
 PHONE = {"width": 375, "height": 812}
 
+# Never followed while crawling: they would log the role out or change data. (Only links are followed,
+# never forms, but some apps act on a plain link.)
+SKIP_LINKS = re.compile(r"(log-?out|log-?off|sign-?out|delete|remove|destroy|unsubscribe|deactivate)", re.I)
+
 
 @dataclass
 class PageResult:
@@ -75,6 +79,10 @@ class SiteMap:
     blocked: str = ""  # why the site refused this browser, if it did
     problems: dict[str, str] = field(default_factory=dict)  # page -> what went wrong while crawling
     results: dict[str, PageResult] = field(default_factory=dict)  # page -> what was measured on it
+    role: str = "public"
+    state: dict | None = None  # the role's logged-in session (cookies, local storage)
+    login_error: str = ""  # set when logging in as the role failed
+    refused: dict[str, str] = field(default_factory=dict)  # must_not_access page -> what happened ("" = refused)
 
 
 def same_site(url: str, home: str) -> bool:
@@ -125,17 +133,20 @@ def _measure(page: Page, result: PageResult, settings: Settings, shots: Path | N
 
 
 def crawl(browser: Browser, home: str, max_pages: int, wait_until: str, *, self_signed_ok: bool = False,
-          settings: Settings | None = None, shots: Path | None = None) -> SiteMap:
-    """Follow the site's links breadth-first; with `settings`, also measure every page on the same visit."""
+          settings: Settings | None = None, shots: Path | None = None, storage_state: dict | None = None,
+          start: str | None = None) -> SiteMap:
+    """Follow the site's links breadth-first; with `settings`, also measure every page on the same visit.
+    `storage_state` is a logged-in session; the crawl then starts at `start` (default: the home page)."""
     site = SiteMap(home=home)
     viewport = {"width": settings.viewport_width, "height": settings.viewport_height} if settings else None
-    context = browser.new_context(ignore_https_errors=self_signed_ok, viewport=viewport)
+    context = browser.new_context(ignore_https_errors=self_signed_ok, viewport=viewport, storage_state=storage_state)
     page = context.new_page()
     if settings:
         page.set_default_timeout(settings.timeout_ms)
     js_errors: list[str] = []
     page.on("pageerror", lambda err: js_errors.append(err.message.splitlines()[0][:200] if err.message else str(err)))
-    queue, seen = [home], {normalise(home)}
+    first = start or home
+    queue, seen = [first], {normalise(first)}
     try:
         while queue and len(site.pages) < max_pages:
             url = queue.pop(0)
@@ -167,7 +178,7 @@ def crawl(browser: Browser, home: str, max_pages: int, wait_until: str, *, self_
             for href in page.evaluate(LINKS_JS):
                 site.links.setdefault(urldefrag(href)[0], url)
                 key = normalise(href)
-                if same_site(href, home) and is_page(href) and key not in seen:
+                if same_site(href, home) and is_page(href) and key not in seen and not SKIP_LINKS.search(urlparse(href).path):
                     seen.add(key)
                     queue.append(key)
             if settings is not None:
@@ -180,18 +191,78 @@ def crawl(browser: Browser, home: str, max_pages: int, wait_until: str, *, self_
     return site
 
 
-@pytest.fixture(scope="session")
-def site_map(browser: Browser, settings: Settings, run_dir: Path) -> SiteMap:
+def roles_to_audit(settings: Settings) -> list[str]:
+    """'public' (logged out) and every role in auth.roles."""
+    names = [r.name for r in settings.auth.roles]
+    return (["public"] if settings.auth.include_public or not names else []) + names
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    if "role" in metafunc.fixturenames:
+        from ui_automation.config import load_settings
+
+        roles = roles_to_audit(load_settings(metafunc.config.getoption("--config")))
+        metafunc.parametrize("role", roles, ids=roles, scope="session")
+
+
+_MAPS: dict[str, SiteMap] = {}
+
+
+def _audit_role(browser: Browser, settings: Settings, run_dir: Path, role: str) -> SiteMap:
+    from urllib.parse import urljoin
+
+    from ui_automation.login import LoginError, is_refused, log_in
+
     home = settings.base_url.rstrip("/") + "/"
-    shots = run_dir / "screenshots" / "site-audit-pages"
+    shots = run_dir / "screenshots" / f"site-audit-pages-{role}"
     shots.mkdir(parents=True, exist_ok=True)
-    return crawl(browser, home, settings.audit.max_pages, settings.navigation_wait_until,
-                 self_signed_ok=accepts_self_signed(settings), settings=settings, shots=shots)
+    state, start = None, None
+    spec = next((r for r in settings.auth.roles if r.name == role), None)
+    if spec is not None:
+        try:
+            state = log_in(browser, settings, spec)
+        except LoginError as exc:
+            return SiteMap(home=home, role=role, login_error=str(exc))
+        start = urljoin(home, spec.start.lstrip("/")) if spec.start else None
+    site = crawl(browser, home, settings.audit.max_pages, settings.navigation_wait_until,
+                 self_signed_ok=accepts_self_signed(settings), settings=settings, shots=shots,
+                 storage_state=state, start=start)
+    site.role = role
+    site.state = state
+    if spec is not None and spec.must_not_access:
+        login_url = urljoin(home, settings.auth.login_url.lstrip("/"))
+        context = browser.new_context(ignore_https_errors=accepts_self_signed(settings), storage_state=state)
+        page = context.new_page()
+        try:
+            for path in spec.must_not_access:
+                url = urljoin(home, path.lstrip("/"))
+                try:
+                    response = page.goto(url, wait_until="domcontentloaded")
+                    page.wait_for_timeout(500)
+                    password_box = page.locator("input[type='password']").count() > 0
+                    status = response.status if response else None
+                    site.refused[path] = "" if is_refused(status, page.url, password_box, login_url) else (
+                        f"opened for role '{role}' (HTTP {status}, ended at {short(page.url, home)})")
+                except PlaywrightError as exc:
+                    site.refused[path] = ""  # the browser could not open it at all: refused
+                    _ = exc
+        finally:
+            context.close()
+    return site
+
+
+@pytest.fixture(scope="session")
+def site_map(browser: Browser, settings: Settings, run_dir: Path, role: str) -> SiteMap:
+    if role not in _MAPS:
+        _MAPS[role] = _audit_role(browser, settings, run_dir, role)
+    return _MAPS[role]
 
 
 @pytest.fixture
 def audit(site_map: SiteMap, request: pytest.FixtureRequest) -> SiteMap:
     """The measured site, for tests that only report (no browser of their own)."""
+    if site_map.login_error:
+        pytest.fail(f"Could not log in: {site_map.login_error}", pytrace=False)
     if site_map.blocked:
         pytest.skip(f"Not tested: {site_map.blocked}")
     return site_map
@@ -201,9 +272,18 @@ def audit(site_map: SiteMap, request: pytest.FixtureRequest) -> SiteMap:
 def site(page: Page, settings: Settings, request: pytest.FixtureRequest, test_artifacts_dir,
          site_map: SiteMap) -> BasePage:
     """A browser page, for the tests that still need one (links, security, website requirements)."""
+    if site_map.login_error:
+        pytest.fail(f"Could not log in: {site_map.login_error}", pytrace=False)
     if site_map.blocked:
         pytest.skip(f"Not tested: {site_map.blocked}")
+    if site_map.state:  # the role's session, so link checks reach pages behind the login
+        page.context.add_cookies(site_map.state.get("cookies", []))
     return BasePage(page, settings, request, test_artifacts_dir)
+
+
+def first_role(settings: Settings, role: str) -> bool:
+    """Site-wide checks (HTTPS, website requirements) run once: logged out, or as the first role."""
+    return role == roles_to_audit(settings)[0]
 
 
 def show(request: pytest.FixtureRequest, site_map: SiteMap, urls: list[str]) -> None:

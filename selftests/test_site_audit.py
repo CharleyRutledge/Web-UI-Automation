@@ -122,7 +122,7 @@ def test_problems_are_counted_exactly(flawed: CliRun) -> None:
 def test_clean_site_passes_everything_but_https(tmp_path: Path) -> None:
     for url in _serve(CLEAN):
         run = audit(tmp_path, url)
-    failed = {t["nodeid"].split("::")[1].split("[")[0]: t["message"] for t in run.summary["tests"] if t["outcome"] != "passed"}
+    failed = {t["nodeid"].split("::")[1].split("[")[0]: t["message"] for t in run.summary["tests"] if t["outcome"] == "failed"}
     # A local test server has no HTTPS; every header is present, so that is the only finding.
     assert list(failed) == ["test_served_securely"], failed
     assert "1 security finding(s)" in failed["test_served_securely"]

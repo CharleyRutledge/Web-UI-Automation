@@ -33,6 +33,28 @@ app:
   start_in: "C:/Users/amkei/Repos/meridiandata-my-local-app"
   start_timeout: 120
 
+# Logging in: the audit runs logged out, then once per role below (remove the # to turn it on).
+# Usernames and passwords go in the .env file (never here, never on GitHub), e.g.
+#   MERIDIAN_ADMIN_USER=you@example.ie
+#   MERIDIAN_ADMIN_PASSWORD=...
+# must_not_access: pages that role must be refused (checked: HTTP 401/403/404 or sent to the login page).
+# auth:
+#   login_url: /login
+#   roles:
+#     - name: admin
+#       username: "${MERIDIAN_ADMIN_USER}"
+#       password: "${MERIDIAN_ADMIN_PASSWORD}"
+#       start: /dashboard          # where to start after logging in (optional)
+#     - name: viewer
+#       username: "${MERIDIAN_VIEWER_USER}"
+#       password: "${MERIDIAN_VIEWER_PASSWORD}"
+#       must_not_access: [/admin]
+#   # Only if the login form isn't found automatically:
+#   # username_field: "#email"
+#   # password_field: "#password"
+#   # submit: "button[type=submit]"
+#   # logged_in_check: "Sign out"    # text, CSS selector or URL part shown only when logged in
+
 # Your own app: serious accessibility problems fail their check, so they get fixed before release.
 accessibility:
   enabled: true
