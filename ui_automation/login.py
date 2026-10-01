@@ -194,12 +194,15 @@ def log_in(browser: Browser, settings: Settings, role: RoleSettings) -> dict[str
         if not _wait_until_logged_in(page, auth, login_url, LOGIN_WAIT_MS):
             said = _page_message(page, (role.password, role.username))
             where = urlparse(page.url).path or "/"
-            reason = (f"the page said: \"{said}\"" if said else
-                      "the page showed no error message, so check the username and password in .env "
-                      "by signing in by hand")
-            check = (f" (auth.logged_in_check {auth.logged_in_check!r} was not found)"
-                     if auth.logged_in_check else "")
-            raise LoginError(f"role '{role.name}': login did not succeed, still on {where}{check}; {reason}")
+            left_login = where.rstrip("/") != urlparse(login_url).path.rstrip("/")
+            if said:
+                reason = f"the page said: \"{said}\""
+            elif left_login and auth.logged_in_check:
+                reason = "the login may have worked: check that auth.logged_in_check matches the page after logging in"
+            else:
+                reason = "the page showed no error message: try the username and password from .env by hand"
+            check = f" (auth.logged_in_check {auth.logged_in_check!r} was not found)" if auth.logged_in_check else ""
+            raise LoginError(f"role '{role.name}': login did not succeed, now on {where}{check}; {reason}")
         return context.storage_state()
     finally:
         context.close()

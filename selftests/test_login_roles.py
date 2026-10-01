@@ -206,7 +206,7 @@ def test_wrong_password_fails_that_role_clearly(tmp_path: Path, app: App) -> Non
     assert run.test("test_crawl_found_the_site[admin-")["outcome"] == "passed"
     t = run.test("test_crawl_found_the_site[viewer-")
     assert t["outcome"] == "error"  # the role's checks could not run at all
-    assert "Could not log in: role 'viewer': login did not succeed, still on /login" in t["message"]
+    assert "Could not log in: role 'viewer': login did not succeed, now on /login" in t["message"]
     assert 'the page said: "Wrong email or password"' in t["message"]  # why, in the app's own words
     assert "not-the-password" not in run.output + t["message"]
 
@@ -240,7 +240,10 @@ def test_logged_in_check_text(tmp_path: Path, app: App) -> None:
     assert set(outcomes(run).values()) == {"passed"}, run.output
     cfg = roles_config(app.url, include_public=False, logged_in_check="Welcome back, captain")
     run = invoke_cli(tmp_path / "2", ["site_audit", "-k", "crawl"], config=cfg, env=ENV)
-    assert "auth.logged_in_check ('Welcome back, captain') was not found" in run.test("test_crawl_found_the_site[admin-")["message"]
+    t = run.test("test_crawl_found_the_site[admin-")
+    text = t["message"] + t["details"]
+    assert "now on /dashboard (auth.logged_in_check 'Welcome back, captain' was not found)" in text
+    assert "the login may have worked" in text
 
 
 def test_passwords_never_reach_output_reports_traces_or_videos(roles_run) -> None:
