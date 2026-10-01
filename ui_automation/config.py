@@ -73,6 +73,14 @@ class ComplianceSettings:
 
 
 @dataclass(frozen=True)
+class AuditSettings:
+    """Whole-site audit (site_audit/): pages are discovered by following the site's own links."""
+    max_pages: int = 15  # pages visited, home first, breadth-first
+    load_budget_ms: int = 5000  # a page slower than this to become usable is reported
+    check_external_links: bool = True  # also check links to other sites (capped at 60)
+
+
+@dataclass(frozen=True)
 class NotificationSettings:
     email: EmailSettings = field(default_factory=EmailSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
@@ -94,6 +102,7 @@ class Settings:
     notifications: NotificationSettings
     accessibility: AccessibilitySettings = field(default_factory=AccessibilitySettings)
     compliance: ComplianceSettings = field(default_factory=ComplianceSettings)
+    audit: AuditSettings = field(default_factory=AuditSettings)
 
     @property
     def video_mode(self) -> str:
@@ -232,6 +241,15 @@ def _pages(raw: Any, name: str) -> tuple[str, ...]:
     return tuple(p.strip() if p.strip().startswith(("/", "http://", "https://")) else "/" + p.strip() for p in raw)
 
 
+def _load_audit(raw: Mapping[str, Any] | None) -> AuditSettings:
+    raw = raw or {}
+    return AuditSettings(
+        max_pages=_as_int(raw.get("max_pages"), 15, "audit.max_pages", minimum=1),
+        load_budget_ms=_as_int(raw.get("load_budget_ms"), 5000, "audit.load_budget_ms", minimum=100),
+        check_external_links=_as_bool(raw.get("check_external_links"), True, "audit.check_external_links"),
+    )
+
+
 def _load_compliance(raw: Mapping[str, Any] | None) -> ComplianceSettings:
     from ui_automation.compliance import ALL_CHECKS
 
@@ -323,6 +341,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         ai=_load_ai(_section(m, "ai")),
         accessibility=_load_accessibility(_section(m, "accessibility")),
         compliance=_load_compliance(_section(m, "compliance")),
+        audit=_load_audit(_section(m, "audit")),
         notifications=NotificationSettings(
             email=_load_email(_section(notif_raw, "email")),
             telegram=_load_telegram(_section(notif_raw, "telegram")),

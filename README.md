@@ -48,6 +48,28 @@ statement link, company details (Companies Act 2014 s.151, S.I. 68/2003), contac
 Trackers are blocked during the check, so tests never send analytics. These checks find what is missing or
 misbehaving; the wording of policies still needs review (and legal advice).
 
+## Audit any website
+
+`site_audit/` audits a whole site from its `base_url`. It finds the pages by following the site's own links,
+home page first, up to `audit.max_pages`. Every page found is then checked for:
+
+- loading, with a title and a main heading
+- uncaught JavaScript errors
+- broken links (internal, plus up to 60 external) and broken images
+- sideways scrolling on a 375 px phone (WCAG 1.4.10)
+- load time against `audit.load_budget_ms`
+- HTTPS and security headers
+- a WCAG scan, with a copyable fix for each issue
+
+Each test lists every problem it finds, not just the first.
+
+```bash
+python -m ui_automation --config config/statespend.yaml -- site_audit tests/test_compliance.py
+```
+
+To audit another site, copy `config/statespend.yaml`, change `base_url`, and run it the same way. In GitHub,
+go to **Actions → Site audit → Run workflow** and enter the config file. statespend.ie is audited weekly.
+
 ## Testing the framework itself
 
 The framework has its own test suite in `selftests/` (separate from the UI tests in `tests/`). Every test
