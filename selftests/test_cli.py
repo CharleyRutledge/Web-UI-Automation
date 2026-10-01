@@ -3,6 +3,8 @@ concurrency, missing tools, and a full run with email + Telegram + Claude all co
 
 from __future__ import annotations
 
+import re
+
 import os
 import shutil
 import threading
@@ -155,16 +157,23 @@ def test_full_run_with_every_notification(run_cli, site, smtp, telegram_api, ant
     # Telegram got the report as a document with a short caption.
     [doc] = telegram_api.calls("sendDocument")
     body = doc.body.decode(errors="replace")
-    assert "FAILED" in body and "Quick fail" in body and 'filename="ui-tests-failed-' in body
+    assert "FAILED" in body and "Quick fail" in body
+    # Named after the site (the settings' name, by default its address) so several suites can share a chat.
+    assert re.search(r'filename="127\.0\.0\.1-\d+-failed-\d{8}_\d{6}\.html"', body), body[:400]
+    assert re.search(r"🌐 127\.0\.0\.1:\d+\r?\n❌ FAILED", body)
     assert telegram_api.calls("getUpdates") == []
     # Email arrived with the same report attached.
     [(sender, rcpts, msg)] = sink.messages
-    assert rcpts == ["qa@example.com"] and "FAILED" in str(msg["Subject"])
+    from email.header import decode_header, make_header
+
+    subject = str(make_header(decode_header(msg["Subject"])))
+    assert rcpts == ["qa@example.com"] and re.match(r"\[UI Automation\] 127\.0\.0\.1:\d+: ❌ FAILED", subject), subject
     assert any(part.get_filename() == "ui-test-report.html" for part in msg.walk())
 
 
 def test_notification_failures_never_break_the_run(run_cli, site, telegram_api, anthropic_api) -> None:
-    telegram_api.script("sendDocument", Reply(500, {"ok": False}))
+    telegram_api.script("sendDocument", Reply(401, {"ok": False}))  # a bad token: permanent, so not retried
+    telegram_api.script("sendMessage", Reply(401, {"ok": False}))  # ...and the text fallback fails too
     anthropic_api.script("/v1/messages", *[Reply(400, anthropic_error("invalid_request_error", "credit too low"))] * 3)
     cfg = base_config(site.url, ai={"enabled": True, "timeout_seconds": 5},
                       notifications={"telegram": {"enabled": True, "bot_token": "1:x", "chat_id": "5"},
@@ -174,7 +183,8 @@ def test_notification_failures_never_break_the_run(run_cli, site, telegram_api, 
                                               "ANTHROPIC_API_KEY": "k", "ANTHROPIC_BASE_URL": anthropic_api.url})
     assert r.returncode == 1  # the test result, not a notification error
     assert "Claude analysis skipped" in r.output and "credit too low" in r.output
-    assert "Telegram notification skipped: Telegram sendDocument returned HTTP 500" in r.output
+    assert "could not attach the report (Telegram sendDocument returned HTTP 401)" in r.output
+    assert "Telegram notification skipped: Telegram sendMessage returned HTTP 401" in r.output
     assert "Email notification skipped" in r.output
     assert (r.run_dir / "summary.html").is_file() and "Traceback" not in r.output
 
@@ -213,3 +223,17 @@ def test_latest_is_published_safely_by_simultaneous_runs(tmp_path: Path) -> None
     assert len({(latest / n).read_text() for n in ("report.html", "summary.json", "summary.html")}) == 1
     assert len(list((latest / "videos").iterdir())) == 20
     assert [p.name for p in reports.iterdir() if p.name.startswith(".")] == [], "no staging/lock leftovers"
+
+
+def test_url_option_tests_that_site_and_names_the_report_after_it(run_cli, site) -> None:
+    cfg = base_config("https://not-this-site.example", name="Configured name")
+    r = run_cli(["scenarios/test_quick.py"], config=cfg, cli_args=["--url", site.url])
+    assert r.returncode == 0, r.output
+    assert r.summary["base_url"] == site.url.rstrip("/")
+    assert r.summary["name"] == site.url.split("://", 1)[1].rstrip("/")  # not the file's name
+
+
+@pytest.mark.parametrize("url", ["statespend.ie", "ftp://x.ie", "javascript:alert(1)", "https://", "https://a b.ie", ""])
+def test_url_option_rejects_non_web_addresses(run_cli, url: str) -> None:
+    r = run_cli(["scenarios/test_quick.py"], cli_args=["--url", url])
+    assert r.returncode == 2 and "must start with http:// or https://" in r.output and r.run_dir is None

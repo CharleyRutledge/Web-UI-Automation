@@ -1,6 +1,7 @@
 # Settings for the public practice-site suite (practice_sites/). Run it with:
 #   python -m ui_automation --config config/practice-sites.yaml -- practice_sites
 base_url: "https://the-internet.herokuapp.com"
+name: "Practice sites (11)"
 browser: chromium
 headless: true
 timeout_ms: 30000
@@ -27,8 +28,10 @@ accessibility:
   standard: wcag21aa
   fail_on: none
 
+# Irish / EU website requirements of every site's home page: other people's sites, so report only.
 compliance:
-  enabled: false
+  enabled: true
+  report_only: true
 
 notifications:
   telegram:

@@ -105,6 +105,7 @@ def test_secrets_never_reach_output_or_artifacts(tmp_path: Path, site, smtp, tel
     where tokens usually leak). Nothing it prints or writes may contain any secret."""
     controller, _ = smtp(login=("robot", "different-password"))
     telegram_api.script("sendDocument", Reply(401, {"ok": False, "description": "Unauthorized"}))
+    telegram_api.script("sendMessage", Reply(401, {"ok": False, "description": "Unauthorized"}))  # the text fallback
     anthropic_api.script("/v1/messages", Reply(401, {"type": "error", "error": {"type": "authentication_error",
                                                                                "message": "invalid x-api-key"}}))
     cfg = base_config(site.url, ai={"enabled": True, "timeout_seconds": 5}, notifications={

@@ -83,6 +83,14 @@ class BasePage:
             wait_until=self.settings.navigation_wait_until,  # type: ignore[arg-type]
         )
 
+    def wait_until_settled(self, timeout_ms: int = 5000) -> None:
+        """Give pages that build their content in the browser (React, Vue, ...) time to finish:
+        wait until the network has been quiet for a moment, or `timeout_ms`, whichever comes first."""
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except PlaywrightError:
+            pass  # pages that keep polling never go quiet; check them as they are
+
     def click_role(
         self,
         role: str,

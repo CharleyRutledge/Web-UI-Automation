@@ -1,10 +1,7 @@
 name: Extended tests
 
+# Only runs when started by hand (Actions -> Extended tests -> Run workflow): no schedule.
 on:
-  schedule:
-    # Weekly, Mondays (UTC). Load runs first; the live check an hour later.
-    - cron: "17 5 * * 1"   # load / performance
-    - cron: "43 6 * * 1"   # live check against the real Telegram and Anthropic APIs
   workflow_dispatch:
     inputs:
       suite:
@@ -18,7 +15,7 @@ permissions:
 
 jobs:
   load:
-    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'load' || github.event.schedule == '17 5 * * 1'
+    if: inputs.suite == 'load'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -37,7 +34,7 @@ jobs:
         run: python -m pytest -c selftests/pytest.ini selftests -m load -s -p no:cacheprovider
 
   live:
-    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'live' || github.event.schedule == '43 6 * * 1'
+    if: inputs.suite == 'live'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

@@ -67,9 +67,18 @@ DEFAULT_COMPLIANCE_CHECKS = ("privacy_notice", "cookie_consent", "accessibility_
 
 @dataclass(frozen=True)
 class ComplianceSettings:
-    enabled: bool = False
+    enabled: bool = True  # always on unless a settings file turns it off
+    report_only: bool = False  # true: list problems in the report without failing the run (others' sites)
     pages: tuple[str, ...] = ("/",)
     checks: tuple[str, ...] = DEFAULT_COMPLIANCE_CHECKS
+
+
+@dataclass(frozen=True)
+class AuditSettings:
+    """Whole-site audit (site_audit/): pages are discovered by following the site's own links."""
+    max_pages: int = 15  # pages visited, home first, breadth-first
+    load_budget_ms: int = 5000  # a page slower than this to become usable is reported
+    check_external_links: bool = True  # also check links to other sites (capped at 60)
 
 
 @dataclass(frozen=True)
@@ -94,6 +103,8 @@ class Settings:
     notifications: NotificationSettings
     accessibility: AccessibilitySettings = field(default_factory=AccessibilitySettings)
     compliance: ComplianceSettings = field(default_factory=ComplianceSettings)
+    audit: AuditSettings = field(default_factory=AuditSettings)
+    name: str = ""  # what the reports call this run, e.g. "statespend.ie site audit" (default: the site's host)
 
     @property
     def video_mode(self) -> str:
@@ -232,6 +243,15 @@ def _pages(raw: Any, name: str) -> tuple[str, ...]:
     return tuple(p.strip() if p.strip().startswith(("/", "http://", "https://")) else "/" + p.strip() for p in raw)
 
 
+def _load_audit(raw: Mapping[str, Any] | None) -> AuditSettings:
+    raw = raw or {}
+    return AuditSettings(
+        max_pages=_as_int(raw.get("max_pages"), 15, "audit.max_pages", minimum=1),
+        load_budget_ms=_as_int(raw.get("load_budget_ms"), 5000, "audit.load_budget_ms", minimum=100),
+        check_external_links=_as_bool(raw.get("check_external_links"), True, "audit.check_external_links"),
+    )
+
+
 def _load_compliance(raw: Mapping[str, Any] | None) -> ComplianceSettings:
     from ui_automation.compliance import ALL_CHECKS
 
@@ -246,7 +266,8 @@ def _load_compliance(raw: Mapping[str, Any] | None) -> ComplianceSettings:
     if unknown:
         raise ValueError(f"settings.yaml: compliance.checks has unknown {unknown}; choose from {list(ALL_CHECKS)}")
     return ComplianceSettings(
-        enabled=_as_bool(raw.get("enabled"), False, "compliance.enabled"),
+        enabled=_as_bool(raw.get("enabled"), True, "compliance.enabled"),
+        report_only=_as_bool(raw.get("report_only"), False, "compliance.report_only"),
         pages=_pages(raw.get("pages", ["/"]), "compliance.pages"),
         checks=checks,
     )
@@ -296,7 +317,11 @@ def load_settings(path: str | Path | None = None) -> Settings:
     raw = resolve_env(parsed)
     m = _as_mapping(raw)
 
-    base_url = str(m.get("base_url") or "").strip().rstrip("/")
+    # WEB_UI_URL (set by `python -m ui_automation --url ...`) tests that site instead of the file's base_url;
+    # the run is then named after it too, not after the site the file was written for.
+    url_override = os.environ.get("WEB_UI_URL", "").strip()
+    base_url = (url_override or str(m.get("base_url") or "")).strip().rstrip("/")
+    name_raw = None if url_override else m.get("name")
     if not base_url:
         raise ValueError("settings.yaml: base_url is required")
     if not re.match(r"^https?://[^/\s]+", base_url, re.IGNORECASE):
@@ -323,11 +348,22 @@ def load_settings(path: str | Path | None = None) -> Settings:
         ai=_load_ai(_section(m, "ai")),
         accessibility=_load_accessibility(_section(m, "accessibility")),
         compliance=_load_compliance(_section(m, "compliance")),
+        audit=_load_audit(_section(m, "audit")),
+        name=_load_name(name_raw, base_url),
         notifications=NotificationSettings(
             email=_load_email(_section(notif_raw, "email")),
             telegram=_load_telegram(_section(notif_raw, "telegram")),
         ),
     )
+
+
+def _load_name(raw: Any, base_url: str) -> str:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        host = re.sub(r"^https?://", "", base_url, flags=re.IGNORECASE).split("/")[0]
+        return host.removeprefix("www.")
+    if not isinstance(raw, str):
+        raise ValueError(f"settings.yaml: name must be text, got {raw!r}")
+    return " ".join(raw.split())[:80]
 
 
 def reports_root(project_root: Path) -> Path:

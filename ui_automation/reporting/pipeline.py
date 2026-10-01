@@ -179,6 +179,7 @@ def finalize_run(
         summary.video_mode = settings.video_mode
         summary.tracing_mode = settings.tracing_mode
         summary.base_url = settings.base_url
+        summary.name = settings.name
 
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")
     if reporter is not None:

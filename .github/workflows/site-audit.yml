@@ -1,9 +1,15 @@
-name: Practice sites
+name: Site audit
 
-# The public automation-practice websites (practice_sites/). Only runs when started by hand
-# (Actions -> Practice sites -> Run workflow): no schedule, no runs on push.
+# Whole-site audit (site_audit/, including the Irish/EU website requirements) of a website you name.
+# Only ever runs when started by hand (Actions -> Site audit -> Run workflow) with a URL: no schedule,
+# no runs on push, no default site.
 on:
   workflow_dispatch:
+    inputs:
+      url:
+        description: Website to audit (https://...)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,11 +20,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  practice-sites:
+  audit:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       CI: true
+      SITE_URL: ${{ inputs.url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -30,8 +37,20 @@ jobs:
           python -m pip install -r requirements.txt
           python -m playwright install --with-deps chromium
           sudo apt-get install -y --no-install-recommends ffmpeg
-      - name: Test the practice sites
-        run: python -m ui_automation --config config/practice-sites.yaml -- practice_sites
+      - name: Audit the site
+        run: |
+          # The URL arrives in an environment variable (never pasted into the script) and is checked again
+          # by the app, which refuses anything that is not http(s)://.
+          # Exit 1 means the audit ran and found problems on the site: that is the report's job, so the
+          # workflow stays green with a warning. Anything else (crash, bad config, no tests) fails it.
+          code=0
+          python -m ui_automation --config config/site-audit.yaml --url "$SITE_URL" -- site_audit || code=$?
+          if [ "$code" -eq 1 ]; then
+            failed=$(python -c "import json,glob; d=json.load(open(sorted(glob.glob('reports/2*/summary.json'))[-1])); print(d['failed'] + d['errors'], 'of', d['total'])")
+            echo "::warning title=Site audit findings::$failed checks found problems on the site. See the report (Telegram or the site-audit-report artifact)."
+          elif [ "$code" -ne 0 ]; then
+            exit "$code"
+          fi
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -40,7 +59,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: practice-sites-report
+          name: site-audit-report
           path: |
             reports/*/summary.html
             reports/*/report.html

@@ -47,6 +47,7 @@ def base_config(site_url: str, **overrides: Any) -> dict[str, Any]:
         "timeout_ms": 3000,
         "artifacts": {"video": "on", "tracing": "retain-on-failure"},
         "ai": {"enabled": False},
+        "compliance": {"enabled": False},  # on by default in real configs; tests that need it turn it on
         "notifications": {"email": {"enabled": False}, "telegram": {"enabled": False}},
     }
     for key, value in overrides.items():

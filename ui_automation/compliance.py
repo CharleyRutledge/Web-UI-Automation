@@ -98,7 +98,8 @@ def _reachable(page: Any, url: str) -> bool:
 def _link_check(page: Any, links: list[dict[str, str]], check: str, pattern: str, what: str) -> CheckResult:
     link = _find_link(links, pattern)
     if not link:
-        return CheckResult(check, False, f"No link to a {what} on this page.")
+        article = "an" if what[:1].lower() in "aeiou" else "a"
+        return CheckResult(check, False, f"No link to {article} {what} on this page.")
     if not _reachable(page, link["href"]):
         return CheckResult(check, False, f"The {what} link ({link['href']}) does not load.")
     return CheckResult(check, True, f"Linked as \"{link['text'] or link['href']}\" and loads.")

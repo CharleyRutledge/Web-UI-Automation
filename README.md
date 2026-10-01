@@ -41,12 +41,44 @@ at `fail_on` severity (`none` = report only). Automated rules cannot prove confo
 still needs a person to check, following the W3C WCAG-EM method (scope, explore, sample, audit, report).
 The report and dashboard themselves are tested against WCAG 2.2 AA (axe, keyboard, focus, 320 px reflow).
 
-**Website requirements (Ireland / EU)** (`compliance:`, off by default): checks each page, before any
+**Website requirements (Ireland / EU)** (`compliance:`, always on; `report_only: true` lists problems
+without failing the run, for sites that aren't yours): checks each page, before any
 consent is given, for a privacy notice link (GDPR Art. 13/14), no tracking cookies or tracker requests
 before consent and a reject option (ePrivacy Regulations S.I. 336/2011, DPC guidance), an accessibility
 statement link, company details (Companies Act 2014 s.151, S.I. 68/2003), contact details and terms.
 Trackers are blocked during the check, so tests never send analytics. These checks find what is missing or
 misbehaving; the wording of policies still needs review (and legal advice).
+
+## Audit any website
+
+`site_audit/` audits a whole site from its `base_url`. It finds the pages by following the site's own links,
+home page first, up to `audit.max_pages`. Every page found is then checked for:
+
+- loading, with a title and a main heading
+- uncaught JavaScript errors
+- broken links (internal, plus up to 60 external) and broken images
+- sideways scrolling on a 375 px phone (WCAG 1.4.10)
+- load time against `audit.load_budget_ms`
+- HTTPS and security headers
+- a WCAG scan, with a copyable fix for each issue
+- Irish/EU website requirements on the home page
+
+Each test lists every problem it finds, not just the first.
+
+```bash
+python -m ui_automation --config config/site-audit.yaml --url https://example.ie -- site_audit
+```
+
+`--url` works with any settings file and names the report after that site. In GitHub, go to
+**Actions → Site audit → Run workflow** and type the website's address. Problems found on the site show
+as a warning on a green run (the report is the result); the run fails only when the audit itself
+could not run.
+
+**Nothing runs on its own.** No suite is scheduled, and none that visits a website or sends a report
+runs on push. The site audit, the practice sites, the playwright.dev browser suite and the load and live
+checks only run when you start them in **Actions** (the site audit only with the URL you type). The
+self-tests and security scan still run on every push and pull request; they use local test servers and
+send nothing.
 
 ## Testing the framework itself
 
@@ -57,9 +89,9 @@ TLS, login), and local stand-ins for the Telegram and Anthropic APIs, used for t
 
 ```powershell
 python -m pip install -r requirements-dev.txt
-python -m pytest -c selftests/pytest.ini selftests            # every push and weekly in CI (~2.5 min)
-python -m pytest -c selftests/pytest.ini selftests -m load -s # weekly: load / performance numbers
-python -m pytest -c selftests/pytest.ini selftests -m live    # weekly: real Claude + Telegram (needs secrets)
+python -m pytest -c selftests/pytest.ini selftests            # every push and pull request in CI (~3 min)
+python -m pytest -c selftests/pytest.ini selftests -m load -s # by hand (Actions -> Extended tests): load / performance numbers
+python -m pytest -c selftests/pytest.ini selftests -m live    # by hand (Actions -> Extended tests): real Claude + Telegram
 ```
 
 | Area | What is covered |

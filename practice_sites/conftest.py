@@ -10,6 +10,7 @@ import pytest
 from playwright.sync_api import Page, Response
 
 from pages.base_page import BasePage
+from ui_automation.blocking import blocked_reason
 from ui_automation.config import Settings
 
 SITES = {
@@ -25,26 +26,6 @@ SITES = {
     "parabank": "https://parabank.parasoft.com/parabank/index.htm",
     "testautomationpractice": "https://testautomationpractice.blogspot.com/",
 }
-
-
-
-def blocked_reason(response: Response | None, page: Page) -> str:
-    """Why the site refused to serve an automated browser, or '' when it did not.
-
-    Shared CI runners are often rate-limited or challenged by anti-bot services. That says nothing about
-    the site or the tests, so it is reported as a skip with the reason, never as a pass or a failure.
-    Ordinary errors (404, 500, ...) are not blocks and still fail.
-    """
-    final = page.url
-    if "google.com/sorry" in final:
-        return f"Google's 'unusual traffic' check blocked this runner ({final.split('?')[0]})"
-    if response is not None and response.status == 429:
-        return f"the site rate-limited this runner (HTTP 429 at {response.url.split('?')[0]})"
-    if response is not None and response.status in (403, 503):
-        title = page.title().lower()
-        if "just a moment" in title or "attention required" in title or "captcha" in title:
-            return f"an anti-bot challenge blocked this runner (HTTP {response.status}, page '{page.title()}')"
-    return ""
 
 
 class PracticeSite(BasePage):

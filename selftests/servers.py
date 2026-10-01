@@ -165,6 +165,7 @@ class Reply:
     body: Any = None  # dict/list -> JSON; str/bytes -> raw
     headers: dict[str, str] = field(default_factory=dict)
     delay: float = 0.0
+    drop: bool = False  # hang up without answering (like a connection reset / SSL error mid-request)
 
 
 @dataclass
@@ -192,6 +193,9 @@ class _StandInHandler(BaseHTTPRequestHandler):
         reply = owner.next_reply(self.path)
         if reply.delay:
             time.sleep(reply.delay)
+        if reply.drop:
+            self.close_connection = True
+            return
         payload = reply.body
         if isinstance(payload, (dict, list)) or payload is None:
             data, ctype = json.dumps(payload if payload is not None else {}).encode(), "application/json"

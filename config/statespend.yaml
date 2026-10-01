@@ -1,0 +1,50 @@
+# Whole-site audit of https://statespend.ie. Run it with:
+#   python -m ui_automation --config config/statespend.yaml -- site_audit
+base_url: "https://statespend.ie"
+name: "statespend.ie site audit"
+browser: chromium
+headless: true
+timeout_ms: 30000
+
+viewport:
+  width: 1280
+  height: 720
+
+screenshot_full_page: false
+
+artifacts:
+  video: on
+  tracing: retain-on-failure
+  navigation_wait_until: domcontentloaded
+
+ai:
+  enabled: true
+  model: claude-sonnet-5-5
+  max_tokens: 2048
+
+# Every page found is scanned; findings (with copyable fixes) are listed in the report.
+# fail_on: none only reports them. Use serious if this is your site and problems should fail the run.
+accessibility:
+  enabled: true
+  standard: wcag21aa
+  fail_on: none
+
+# Irish / EU website requirements, checked on the home page before any cookie consent is given.
+compliance:
+  enabled: true
+  report_only: false  # problems fail their check (the run still ends green with a warning)
+  pages:
+    - /
+  # Run by an individual, not a company: no company registration number or registered office required.
+  checks: [privacy_notice, cookie_consent, accessibility_statement, contact_details]
+
+audit:
+  max_pages: 20
+  load_budget_ms: 5000
+  check_external_links: true
+
+notifications:
+  telegram:
+    enabled: true
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    chat_id: "${TELEGRAM_CHAT_ID}"

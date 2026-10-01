@@ -202,3 +202,20 @@ def test_web_ui_config_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     p.write_text("base_url: http://from-env\n", encoding="utf-8")
     monkeypatch.setenv("WEB_UI_CONFIG", str(p))
     assert load_settings().base_url == "http://from-env"
+
+
+def test_audit_defaults_and_values(tmp_path: Path) -> None:
+    assert load(tmp_path, BASE).audit.max_pages == 15
+    a = load(tmp_path, BASE + "audit: {max_pages: '3', load_budget_ms: 800, check_external_links: 'false'}\n").audit
+    assert (a.max_pages, a.load_budget_ms, a.check_external_links) == (3, 800, False)
+
+
+@pytest.mark.parametrize(
+    "raw, field",
+    [("{max_pages: 0}", "audit.max_pages"), ("{max_pages: many}", "audit.max_pages"),
+     ("{load_budget_ms: 50}", "audit.load_budget_ms"), ("{check_external_links: maybe}", "audit.check_external_links"),
+     ("[1]", "'audit'")],
+)
+def test_audit_rejected(tmp_path: Path, raw: str, field: str) -> None:
+    with pytest.raises(ValueError, match=field.replace(".", r"\.")):
+        load(tmp_path, BASE + f"audit: {raw}\n")
