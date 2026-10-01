@@ -72,7 +72,8 @@ def _serve(pages: dict[str, str]) -> Iterator[str]:
 
 def audit(workdir: Path, url: str) -> CliRun:
     cfg = base_config(url, timeout_ms=10000, artifacts={"video": "off"}, accessibility={"fail_on": "none"},
-                      audit={"max_pages": 10, "check_external_links": False}, compliance={"enabled": True},
+                      audit={"max_pages": 10, "check_external_links": False, "security_checks": "on"},
+                      compliance={"enabled": True},
                       name="Test site audit")
     return invoke_cli(workdir, ["site_audit"], config=cfg)
 
@@ -127,12 +128,13 @@ def test_clean_site_passes_everything_but_https(tmp_path: Path) -> None:
     assert "1 security finding(s)" in failed["test_served_securely"]
 
 
-def test_unreachable_site_fails_clearly(tmp_path: Path) -> None:
+def test_unreachable_local_app_is_explained_before_any_test(tmp_path: Path) -> None:
     from servers import free_port
 
-    run = audit(tmp_path, f"http://127.0.0.1:{free_port()}")
-    t = run.test("test_crawl_found_the_site")
-    assert t["outcome"] == "failed" and "ERR_CONNECTION_REFUSED" in t["message"] + t["details"]
+    port = free_port()
+    run = audit(tmp_path, f"http://127.0.0.1:{port}")
+    assert run.returncode == 2 and run.run_dir is None
+    assert f"Nothing is answering at http://127.0.0.1:{port}" in run.output
 
 
 def test_report_names_the_site_and_lists_requirements(flawed: CliRun) -> None:

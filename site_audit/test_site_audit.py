@@ -14,6 +14,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from pages.base_page import BasePage
 from ui_automation.compliance import Monitor, as_dicts, check_page
+from ui_automation.local import is_local
 from site_audit.conftest import SiteMap, same_site, short
 
 # Sites that refuse automated link checks (they answer bots with these) are "unverified", not broken.
@@ -157,6 +158,10 @@ def test_pages_load_quickly(site: BasePage, site_map: SiteMap) -> None:
 
 def test_served_securely(site: BasePage, site_map: SiteMap) -> None:
     home = site_map.home
+    mode = site.settings.audit.security_checks
+    if mode == "off" or (mode == "auto" and is_local(home)):
+        pytest.skip("local app: HTTPS and security headers are checked on the deployed site "
+                    "(audit.security_checks: on checks them here too)")
     problems: list[str] = []
     host = urlparse(home).hostname
     site.step("Check HTTPS and security headers")

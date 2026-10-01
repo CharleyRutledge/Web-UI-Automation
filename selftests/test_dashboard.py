@@ -91,6 +91,15 @@ def test_serves_reports(dash: Dashboard) -> None:
     assert dash.get("/reports/20260101_000000/nope.html").status_code == 404
 
 
+def test_reports_folder_given_as_text(tmp_path: Path) -> None:
+    seed_run(tmp_path / "reports", "20260105_000000")
+    d = Dashboard(str(tmp_path / "reports"))  # type: ignore[arg-type]
+    try:
+        assert "20260105_000000" in d.get("/").text
+    finally:
+        d.server.shutdown()
+
+
 def test_empty_reports_folder(tmp_path: Path) -> None:
     d = Dashboard(tmp_path / "does-not-exist")
     try:

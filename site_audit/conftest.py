@@ -13,7 +13,7 @@ from playwright.sync_api import Browser, Error as PlaywrightError, Page
 
 from pages.base_page import BasePage
 from ui_automation.blocking import blocked_reason
-from ui_automation.config import Settings
+from ui_automation.config import Settings, accepts_self_signed
 
 # Links to files rather than pages: checked as links, never opened as pages.
 FILE_EXTENSIONS = (".pdf", ".zip", ".csv", ".xls", ".xlsx", ".doc", ".docx", ".ppt", ".pptx", ".json", ".xml",
@@ -47,9 +47,9 @@ def normalise(url: str) -> str:
     return parsed._replace(query="", path=parsed.path or "/").geturl()
 
 
-def crawl(browser: Browser, home: str, max_pages: int, wait_until: str) -> SiteMap:
+def crawl(browser: Browser, home: str, max_pages: int, wait_until: str, *, self_signed_ok: bool = False) -> SiteMap:
     site = SiteMap(home=home)
-    context = browser.new_context()
+    context = browser.new_context(ignore_https_errors=self_signed_ok)  # self-signed certificates on local apps
     page = context.new_page()
     queue, seen = [home], {normalise(home)}
     try:
@@ -88,7 +88,8 @@ def crawl(browser: Browser, home: str, max_pages: int, wait_until: str) -> SiteM
 @pytest.fixture(scope="session")
 def site_map(browser: Browser, settings: Settings) -> SiteMap:
     home = settings.base_url.rstrip("/") + "/"
-    return crawl(browser, home, settings.audit.max_pages, settings.navigation_wait_until)
+    return crawl(browser, home, settings.audit.max_pages, settings.navigation_wait_until,
+                 self_signed_ok=accepts_self_signed(settings))
 
 
 @pytest.fixture
