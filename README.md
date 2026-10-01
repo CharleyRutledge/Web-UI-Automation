@@ -63,7 +63,8 @@ home page first, up to `audit.max_pages`. Every page found is then checked for:
 - a WCAG scan, with a copyable fix for each issue
 - Irish/EU website requirements on the home page
 
-Each test lists every problem it finds, not just the first.
+Each page is opened once and all of this is measured on that visit, so a 25-page audit stays quick.
+Each check lists every problem it finds, not just the first.
 
 ```bash
 python -m ui_automation --config config/site-audit.yaml --url https://example.ie -- site_audit
