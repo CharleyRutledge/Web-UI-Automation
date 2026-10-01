@@ -35,7 +35,8 @@ compliance:
   report_only: false  # problems fail their check (the run still ends green with a warning)
   pages:
     - /
-  checks: [privacy_notice, cookie_consent, accessibility_statement, company_details, contact_details]
+  # Run by an individual, not a company: no company registration number or registered office required.
+  checks: [privacy_notice, cookie_consent, accessibility_statement, contact_details]
 
 audit:
   max_pages: 20
