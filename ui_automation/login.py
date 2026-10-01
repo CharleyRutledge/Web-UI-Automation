@@ -8,6 +8,7 @@ Credentials come from environment variables or the git-ignored .env file, never 
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -119,7 +120,9 @@ def _page_message(page: Page, secrets: tuple[str, ...]) -> str:
             continue
     if not any(t.strip() for t in texts):
         try:
-            texts.append(page.get_by_text(ERROR_WORDS).first.inner_text(timeout=1_000))
+            words = page.get_by_text(ERROR_WORDS)
+            if words.count():  # (asking for the text of nothing would wait for it to appear)
+                texts.append(words.first.inner_text(timeout=1_000))
         except PlaywrightError:
             pass
     message = ""
@@ -135,19 +138,18 @@ def _page_message(page: Page, secrets: tuple[str, ...]) -> str:
 
 def _wait_until_logged_in(page: Page, auth: AuthSettings, login_url: str, timeout_ms: int) -> bool:
     """Wait for the logged-in sign; stop early when the page shows an error (like "wrong password") instead."""
+    deadline = time.monotonic() + timeout_ms / 1000
     page.wait_for_timeout(500)
     _settle(page)
-    waited = 0
     while True:
         try:
             if _logged_in(page, auth, login_url):
                 return True
         except PlaywrightError:
             pass  # the page is navigating: look again
-        if waited >= timeout_ms or ERROR_WORDS.search(_page_message(page, ())):
+        if time.monotonic() >= deadline or ERROR_WORDS.search(_page_message(page, ())):
             return False
         page.wait_for_timeout(250)
-        waited += 250
 
 
 class _Evidence:
