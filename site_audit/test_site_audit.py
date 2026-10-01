@@ -155,7 +155,7 @@ def test_served_securely(site: BasePage, site_map: SiteMap) -> None:
 
 def test_pages_are_accessible(audit: SiteMap, settings, request: pytest.FixtureRequest) -> None:
     """Every page scanned with axe-core; findings (with fixes) are in the report's Accessibility section."""
-    from ui_automation.accessibility import at_or_above, describe
+    from ui_automation.accessibility import at_or_above
 
     cfg = settings.accessibility
     if not cfg.enabled:
@@ -164,14 +164,24 @@ def test_pages_are_accessible(audit: SiteMap, settings, request: pytest.FixtureR
     request.node.accessibility = [
         {"url": r.url, "standard": cfg.standard, "violations": [v.__dict__ for v in r.accessibility]} for r in pages
     ]
-    failures = []
+    # Grouped by issue, not by page: the same issue on most pages is one fix in a shared header, footer or style.
+    by_rule: dict[str, dict] = {}
     if cfg.fail_on != "none":
         for r in pages:
-            blocking = at_or_above(r.accessibility, cfg.fail_on)
-            if blocking:
-                failures.append(f"{short(r.url, audit.home)}: " + describe(blocking).splitlines()[0])
+            for v in at_or_above(r.accessibility, cfg.fail_on):
+                entry = by_rule.setdefault(v.rule, {"v": v, "pages": []})
+                entry["pages"].append(short(r.url, audit.home))
+    failures = []
+    for entry in sorted(by_rule.values(), key=lambda e: -len(e["pages"])):
+        v, where = entry["v"], entry["pages"]
+        crit = f" (WCAG {', '.join(v.criteria)})" if v.criteria else ""
+        listed = ", ".join(where[:5]) + (f" and {len(where) - 5} more" if len(where) > 5 else "")
+        shared = (" - on most pages, so probably one fix in a shared header, footer or style"
+                  if len(pages) > 2 and len(where) >= 0.6 * len(pages) else "")
+        example = f"; e.g. {v.targets[0]}" if v.targets else ""
+        failures.append(f"[{v.impact}] {v.help}{crit}: {len(where)} page(s): {listed}{example}{shared}")
     show(request, audit, [r.url for r in pages if r.accessibility])
-    report(failures, "page(s) with accessibility problems at or above the configured level")
+    report(failures, f"accessibility issue type(s) at or above '{cfg.fail_on}' (fixes are in the report)")
 
 
 def test_meets_website_requirements(site: BasePage, site_map: SiteMap, request) -> None:

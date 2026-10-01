@@ -150,3 +150,19 @@ def test_report_only_lists_requirements_without_failing(tmp_path: Path) -> None:
         run = invoke_cli(tmp_path, ["site_audit", "-k", "requirements"], config=cfg)
     t = run.test("test_meets_website_requirements")
     assert t["outcome"] == "passed" and any(not r["passed"] for r in t["compliance"][0]["results"])
+
+
+def test_shared_accessibility_issue_is_reported_once_with_its_pages(tmp_path: Path) -> None:
+    """Meridian Data's first run said '1 accessibility issue(s)' on 23 pages without naming it. The same issue in a
+    shared footer must come out as one line: what it is, on which pages, and that it is probably one fix."""
+    footer = '<footer><p style="color:#bbb;background:#fff">Grey footer text</p></footer>'
+    shared = {path: _page(title, f'<h1>{title}</h1><a href="/">Home</a> <a href="/a">A</a> <a href="/b">B</a>{footer}')
+              for path, title in (("/", "Home"), ("/a", "A"), ("/b", "B"))}
+    for url in _serve(shared):
+        cfg = base_config(url, artifacts={"video": "off"}, accessibility={"fail_on": "serious"},
+                          audit={"max_pages": 5, "check_external_links": False})
+        run = invoke_cli(tmp_path, ["site_audit", "-k", "accessible"], config=cfg)
+    message = run.test("test_pages_are_accessible")["message"] + run.test("test_pages_are_accessible")["details"]
+    assert "1 accessibility issue type(s) at or above 'serious'" in message
+    assert "[serious] Elements must meet minimum color contrast ratio thresholds (WCAG 1.4.3): 3 page(s): /, /a, /b" in message
+    assert "probably one fix in a shared header, footer or style" in message
