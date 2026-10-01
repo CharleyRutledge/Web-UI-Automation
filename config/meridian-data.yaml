@@ -1,7 +1,7 @@
 # Meridian Data, running on this computer. From the Web-UI-Automation folder:
 #   python -m ui_automation --config config/meridian-data.yaml -- site_audit
-# If the app: section below is filled in, the tests start Meridian Data first and stop it afterwards
-# (unless it is already running: then it is tested as it is and left running). --no-start skips that.
+# The app: section below starts the front end first and stops it afterwards (if it is already running,
+# it is tested as it is and left running). --no-start never starts it.
 # A different port? Change base_url, or add --url http://localhost:8080 for one run.
 base_url: "http://localhost:8082"  # the Meridian Data front end (the API is on :3000, the database on :5433)
 name: "Meridian Data (local)"
@@ -25,14 +25,13 @@ ai:
   model: claude-sonnet-5-5
   max_tokens: 2048
 
-# How to start and stop Meridian Data (remove the # to turn it on). The API and database run in Docker
-# (Compose project local-infra); the front end on :8082 is what the tests open, so the start command has to
-# bring that up too. If the front end is started separately, start everything yourself and leave this off.
-# app:
-#   start: "docker compose up -d --wait"
-#   stop: "docker compose down"
-#   start_in: "C:/Users/amkei/Repos/meridiandata-my-local-app/local-infra"
-#   start_timeout: 180   # the first start may need to download or build images
+# Starts the Meridian Data front end (Vite) if it is not already running, and stops it after the tests.
+# The API and database stay in Docker (Compose project local-infra) and are not touched: start them yourself.
+# (They run with an extra CORS file; restarting them from the folder alone would drop it.)
+app:
+  start: "npm run dev -- --port 8082 --strictPort"
+  start_in: "C:/Users/amkei/Repos/meridiandata-my-local-app"
+  start_timeout: 120
 
 # Your own app: serious accessibility problems fail their check, so they get fixed before release.
 accessibility:

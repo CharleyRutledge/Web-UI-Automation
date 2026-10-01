@@ -94,6 +94,7 @@ class AppServer:
         self.stop_problem = ""  # set when the stop command fails
         self._log_file = None
         self._started = False
+        self.progress_every = 15.0  # seconds between "still waiting" messages
 
     def start(self) -> str:
         """Start and wait until the app answers. '' when ready, otherwise what went wrong (it is stopped)."""
@@ -109,8 +110,14 @@ class AppServer:
         # The user's own start command (like an npm script), run on their machine: a shell is what they expect.
         self.process = subprocess.Popen(self.command, shell=True, **kwargs)  # noqa: S602  # nosec B602
         self._started = True
-        deadline = time.monotonic() + self.timeout
+        started = time.monotonic()
+        deadline = started + self.timeout
+        next_note = started + self.progress_every
         while time.monotonic() < deadline:
+            if time.monotonic() >= next_note:  # a first start (installs, builds) can take a while: show progress
+                print(f"  still waiting for {self.url} ({time.monotonic() - started:.0f} s of {self.timeout:g} s) ...",
+                      flush=True)
+                next_note += self.progress_every
             if self.process is not None and self.process.poll() is not None:
                 code = self.process.returncode
                 if code == 0:

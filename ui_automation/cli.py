@@ -313,7 +313,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Starting the app: {start_cmd} (in {start_dir}); waiting for {settings.base_url} ...")
         server = AppServer(start_cmd, settings.base_url, timeout=start_timeout, cwd=start_dir,
                            log=run_dir / "app-server.log", stop_command=stop_cmd or None)
-        problem = server.start()
+        try:
+            problem = server.start()
+        except KeyboardInterrupt:
+            server.stop()
+            print("\nStopped: interrupted while waiting for the app (it has been shut down again).", file=sys.stderr)
+            return 130
         if problem:
             print(f"Could not start the app: {problem}", file=sys.stderr)
             if server.stop_problem:
@@ -339,8 +344,10 @@ def main(argv: list[str] | None = None) -> int:
     latest_report = publish_latest_report(run_dir, reports_dir)
     print(f"Latest report copy: {latest_report}")
 
-    if args.open and latest_report.is_file():
-        open_report(latest_report)
+    # The clear one-page summary (the same one Telegram/email get); the full pytest report as a fallback.
+    summary_page = latest_report.with_name("summary.html")
+    if args.open and (summary_page.is_file() or latest_report.is_file()):
+        open_report(summary_page if summary_page.is_file() else latest_report)
 
     return exit_code
 

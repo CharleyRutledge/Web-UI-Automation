@@ -265,3 +265,65 @@ def test_app_settings_rejected(tmp_path: Path, raw: str, field: str) -> None:
     cfg.write_text(f"base_url: http://localhost:3000\napp: {raw}\n")
     with pytest.raises(ValueError, match=field.replace(".", r"\.")):
         load_settings(cfg)
+
+
+# ------------------------------------------------------------------ found on the first Windows run
+
+
+def test_axe_with_windows_line_endings_is_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Git on Windows turned axe.min.js's LF into CRLF, the checksum failed and no page was scanned."""
+    import ui_automation.accessibility as a11y
+
+    crlf = tmp_path / "axe.min.js"
+    crlf.write_bytes(a11y._AXE_PATH.read_bytes().replace(b"\n", b"\r\n"))
+    monkeypatch.setattr(a11y, "_AXE_PATH", crlf)
+    assert "axe" in a11y.axe_source()[:2000]
+
+
+def test_tampered_axe_is_still_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import ui_automation.accessibility as a11y
+
+    bad = tmp_path / "axe.min.js"
+    bad.write_bytes(a11y._AXE_PATH.read_bytes() + b"\nwindow.stolen = document.cookie;")
+    monkeypatch.setattr(a11y, "_AXE_PATH", bad)
+    with pytest.raises(RuntimeError, match="does not match axe-core"):
+        a11y.axe_source()
+
+
+def test_git_keeps_vendored_files_byte_for_byte() -> None:
+    import subprocess
+
+    out = subprocess.run(["git", "check-attr", "text", "ui_automation/accessibility/vendor/axe.min.js"],
+                         cwd=HERE.parent, capture_output=True, text=True).stdout
+    assert out.strip().endswith("text: unset"), out
+
+
+def test_open_shows_the_summary_report(tmp_path: Path, site) -> None:
+    opened = tmp_path / "opened.txt"
+    recorder = tmp_path / "browser.py"
+    recorder.write_text(f"import sys; open(r'{opened}', 'w').write(sys.argv[1])")
+    run = invoke_cli(tmp_path, ["scenarios/test_quick.py"], config=base_config(site.url), cli_args=["--open"],
+                     env={"BROWSER": f'"{sys.executable}" "{recorder}" %s'})
+    assert run.returncode == 0, run.output
+    assert opened.read_text().endswith("/latest/summary.html")
+
+
+def test_waiting_for_a_slow_app_shows_progress(capsys: pytest.CaptureFixture) -> None:
+    server = AppServer(f'"{sys.executable}" -c "import time; time.sleep(30)"', f"http://127.0.0.1:{free_port()}",
+                       timeout=2.5)
+    server.progress_every = 0.8
+    server.start()
+    out = capsys.readouterr().out
+    assert out.count("still waiting for") >= 2 and "s of 2.5 s" in out
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="sends SIGINT")
+def test_ctrl_c_while_waiting_stops_cleanly(tmp_path: Path) -> None:
+    pid_file = tmp_path / "pid"
+    cmd = f'"{sys.executable}" -c "import os, time; open(r\'{pid_file}\', \'w\').write(str(os.getpid())); time.sleep(60)"'
+    run = invoke_cli(tmp_path, ["scenarios/test_quick.py"], config=base_config(f"http://localhost:{free_port()}"),
+                     cli_args=["--start", cmd, "--start-timeout", "60"], interrupt_after=3)
+    assert run.returncode == 130, run.output
+    assert "Traceback" not in run.output and "interrupted while waiting for the app" in run.output
+    time.sleep(0.5)
+    assert not _alive(int(pid_file.read_text())), "the app being started is shut down again"
