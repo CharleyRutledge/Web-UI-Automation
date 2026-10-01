@@ -67,7 +67,8 @@ DEFAULT_COMPLIANCE_CHECKS = ("privacy_notice", "cookie_consent", "accessibility_
 
 @dataclass(frozen=True)
 class ComplianceSettings:
-    enabled: bool = False
+    enabled: bool = True  # always on unless a settings file turns it off
+    report_only: bool = False  # true: list problems in the report without failing the run (others' sites)
     pages: tuple[str, ...] = ("/",)
     checks: tuple[str, ...] = DEFAULT_COMPLIANCE_CHECKS
 
@@ -103,6 +104,7 @@ class Settings:
     accessibility: AccessibilitySettings = field(default_factory=AccessibilitySettings)
     compliance: ComplianceSettings = field(default_factory=ComplianceSettings)
     audit: AuditSettings = field(default_factory=AuditSettings)
+    name: str = ""  # what the reports call this run, e.g. "statespend.ie site audit" (default: the site's host)
 
     @property
     def video_mode(self) -> str:
@@ -264,7 +266,8 @@ def _load_compliance(raw: Mapping[str, Any] | None) -> ComplianceSettings:
     if unknown:
         raise ValueError(f"settings.yaml: compliance.checks has unknown {unknown}; choose from {list(ALL_CHECKS)}")
     return ComplianceSettings(
-        enabled=_as_bool(raw.get("enabled"), False, "compliance.enabled"),
+        enabled=_as_bool(raw.get("enabled"), True, "compliance.enabled"),
+        report_only=_as_bool(raw.get("report_only"), False, "compliance.report_only"),
         pages=_pages(raw.get("pages", ["/"]), "compliance.pages"),
         checks=checks,
     )
@@ -342,11 +345,21 @@ def load_settings(path: str | Path | None = None) -> Settings:
         accessibility=_load_accessibility(_section(m, "accessibility")),
         compliance=_load_compliance(_section(m, "compliance")),
         audit=_load_audit(_section(m, "audit")),
+        name=_load_name(m.get("name"), base_url),
         notifications=NotificationSettings(
             email=_load_email(_section(notif_raw, "email")),
             telegram=_load_telegram(_section(notif_raw, "telegram")),
         ),
     )
+
+
+def _load_name(raw: Any, base_url: str) -> str:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        host = re.sub(r"^https?://", "", base_url, flags=re.IGNORECASE).split("/")[0]
+        return host.removeprefix("www.")
+    if not isinstance(raw, str):
+        raise ValueError(f"settings.yaml: name must be text, got {raw!r}")
+    return " ".join(raw.split())[:80]
 
 
 def reports_root(project_root: Path) -> Path:

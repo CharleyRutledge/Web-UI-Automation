@@ -32,7 +32,7 @@ def send_run_email(
         print("Email notification skipped: smtp_user/smtp_password not resolved (missing env vars)")
         return
 
-    subject = f"[UI Automation] {summary.headline()}"
+    subject = f"[UI Automation] {summary.name + ': ' if summary.name else ''}{summary.headline()}"
     body_lines = [summary.headline(), ""]
     for test in summary.problems[:10]:
         where = f' at step "{test.last_step}"' if test.last_step else ""

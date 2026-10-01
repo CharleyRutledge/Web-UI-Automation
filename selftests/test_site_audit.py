@@ -29,8 +29,15 @@ FLAWED = {
     "/js-error": _page("JS", "<h1>JS</h1><script>undefinedFunction()</script>"),
     "/report.pdf": "%PDF-1.4",
 }
+# Everything an Irish website needs (privacy, cookies, accessibility statement, company and contact details).
+_FOOTER = ('<footer><a href="/privacy">Privacy notice</a> <a href="/accessibility">Accessibility statement</a> '
+           '<a href="/contact">Contact us</a><p>Example Ltd, registered in Ireland, company number 654321. Registered '
+           'office: 1 Main Street, Dublin 2. Email: <a href="mailto:hi@example.ie">hi@example.ie</a></p></footer>')
 CLEAN = {
-    "/": _page("Home", '<h1>Home</h1><a href="/about">About</a>'),
+    "/": _page("Home", '<h1>Home</h1><a href="/about">About</a>' + _FOOTER),
+    "/privacy": _page("Privacy", "<h1>Privacy notice</h1>"),
+    "/accessibility": _page("Accessibility", "<h1>Accessibility statement</h1>"),
+    "/contact": _page("Contact", "<h1>Contact us</h1>"),
     # Built in the browser after a slow request, like a React/Vue page: the audit must wait for it.
     "/about": _page("About", '<div id="app">Loading…</div><script>fetch("/slow").then(() => {'
                              'document.getElementById("app").innerHTML = \'<h1>About</h1><a href="/">Home</a>\';})</script>'),
@@ -65,7 +72,8 @@ def _serve(pages: dict[str, str]) -> Iterator[str]:
 
 def audit(workdir: Path, url: str) -> CliRun:
     cfg = base_config(url, timeout_ms=10000, artifacts={"video": "off"}, accessibility={"fail_on": "none"},
-                      audit={"max_pages": 10, "check_external_links": False})
+                      audit={"max_pages": 10, "check_external_links": False}, compliance={"enabled": True},
+                      name="Test site audit")
     return invoke_cli(workdir, ["site_audit"], config=cfg)
 
 
@@ -92,6 +100,8 @@ def test_crawl_follows_links_once_and_skips_files(flawed: CliRun) -> None:
         ("test_no_broken_images", ["/about: http://127.0.0.1:"]),
         ("test_pages_work_on_a_phone", ["/wide: page is 1208px wide on a 375px phone (widest element: div.table-wrap)"]),
         ("test_served_securely", ["the site is not served over HTTPS"]),
+        ("test_meets_website_requirements", ["Privacy notice: No link to a privacy notice", "(GDPR Art. 13/14",
+                                             "Accessibility statement: No link to an accessibility statement"]),
     ],
 )
 def test_each_planted_problem_is_found(flawed: CliRun, test: str, expected: list[str]) -> None:
@@ -123,3 +133,18 @@ def test_unreachable_site_fails_clearly(tmp_path: Path) -> None:
     run = audit(tmp_path, f"http://127.0.0.1:{free_port()}")
     t = run.test("test_crawl_found_the_site")
     assert t["outcome"] == "failed" and "ERR_CONNECTION_REFUSED" in t["message"] + t["details"]
+
+
+def test_report_names_the_site_and_lists_requirements(flawed: CliRun) -> None:
+    html = (flawed.run_dir / "summary.html").read_text(encoding="utf-8")
+    assert '<p class="site">Test site audit</p>' in html and "<title>Test site audit: FAILED</title>" in html
+    assert "Website requirements (Ireland / EU)" in html
+
+
+def test_report_only_lists_requirements_without_failing(tmp_path: Path) -> None:
+    for url in _serve(FLAWED):
+        cfg = base_config(url, artifacts={"video": "off"}, compliance={"enabled": True, "report_only": True},
+                          audit={"max_pages": 1, "check_external_links": False})
+        run = invoke_cli(tmp_path, ["site_audit", "-k", "requirements"], config=cfg)
+    t = run.test("test_meets_website_requirements")
+    assert t["outcome"] == "passed" and any(not r["passed"] for r in t["compliance"][0]["results"])

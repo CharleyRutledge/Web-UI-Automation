@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -81,7 +82,8 @@ _CAPTION_LIMIT = 1024  # Telegram's limit for a document caption
 
 
 def build_caption(summary: RunSummary) -> str:
-    lines = [summary.headline()]
+    # The site comes first, so a chat with several suites (practice sites, a site audit, ...) is readable.
+    lines = ([f"🌐 {summary.name}"] if summary.name else []) + [summary.headline()]
     problems = summary.problems
     if problems:
         lines.append("")
@@ -156,7 +158,8 @@ def send_run_telegram(
 
     caption = build_caption(summary)
     if attachment is not None and attachment.is_file():
-        name = f"ui-tests-{'passed' if summary.ok else 'failed'}-{summary.run_dir.name if summary.run_dir else 'run'}.html"
+        label = re.sub(r"[^A-Za-z0-9.]+", "-", summary.name).strip("-.").lower() or "ui-tests"
+        name = f"{label}-{'passed' if summary.ok else 'failed'}-{summary.run_dir.name if summary.run_dir else 'run'}.html"
         data = attachment.read_bytes()
         try:
             if len(data) > _DOCUMENT_LIMIT:

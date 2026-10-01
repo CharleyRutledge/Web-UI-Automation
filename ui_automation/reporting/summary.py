@@ -87,6 +87,7 @@ class RunSummary:
     video_mode: str = ""
     tracing_mode: str = ""
     base_url: str = ""
+    name: str = ""  # what this run is called in reports (settings name, default the site's host)
     run_url: str = ""  # link to the CI run, when running in GitHub Actions
 
     @property
@@ -137,6 +138,7 @@ class RunSummary:
             "video_mode": self.video_mode,
             "tracing_mode": self.tracing_mode,
             "base_url": self.base_url,
+            "name": self.name,
             "tests": [asdict(t) for t in self.tests],
         }
 
@@ -154,6 +156,7 @@ class RunSummary:
             video_mode=data.get("video_mode", ""),
             tracing_mode=data.get("tracing_mode", ""),
             base_url=data.get("base_url", ""),
+            name=data.get("name", ""),
             tests=[TestResult(**t) for t in data.get("tests", [])],
         )
         report = run_dir / (data.get("report_html") or "report.html")

@@ -1,4 +1,5 @@
 base_url: "https://your-app.example.com"
+name: "My site"  # shown on every report and Telegram message (default: the site's address)
 browser: chromium
 headless: true
 timeout_ms: 30000
@@ -35,7 +36,8 @@ accessibility:
 # Irish / EU website requirements: privacy notice, cookie consent (no tracking before consent),
 # accessibility statement, company details, contact details, terms. Off unless the site is yours.
 compliance:
-  enabled: false
+  enabled: true
+  report_only: false  # true: list problems in the report without failing (a site that isn't yours)
   pages:
     - /
   checks: [privacy_notice, cookie_consent, accessibility_statement, company_details, contact_details]

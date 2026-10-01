@@ -1,7 +1,8 @@
 """Website compliance (Ireland / EU): one test per page in settings.yaml -> compliance.pages.
 
-Off by default (compliance.enabled: false): company and cookie rules depend on who runs the site.
-Checks what is missing or misbehaving; the wording of policies still needs a person (and legal advice).
+On by default. For a site that is not yours, set compliance.report_only: true to list the problems in the
+report without failing the run. Checks what is missing or misbehaving; the wording of policies still
+needs a person (and legal advice).
 """
 
 from __future__ import annotations
@@ -36,5 +37,5 @@ def test_page_meets_website_requirements(
     results = check_page(page, monitor, settings.compliance.checks)
     request.node.compliance = [{"url": page.url, "results": as_dicts(results)}]
     failed = [r for r in results if not r.passed]
-    if failed:
+    if failed and not settings.compliance.report_only:
         raise AssertionError(f"{page.url}: " + "; ".join(f"{r.title}: {r.detail}" for r in failed))

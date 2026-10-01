@@ -3,6 +3,8 @@ concurrency, missing tools, and a full run with email + Telegram + Claude all co
 
 from __future__ import annotations
 
+import re
+
 import os
 import shutil
 import threading
@@ -155,11 +157,17 @@ def test_full_run_with_every_notification(run_cli, site, smtp, telegram_api, ant
     # Telegram got the report as a document with a short caption.
     [doc] = telegram_api.calls("sendDocument")
     body = doc.body.decode(errors="replace")
-    assert "FAILED" in body and "Quick fail" in body and 'filename="ui-tests-failed-' in body
+    assert "FAILED" in body and "Quick fail" in body
+    # Named after the site (the settings' name, by default its address) so several suites can share a chat.
+    assert re.search(r'filename="127\.0\.0\.1-\d+-failed-\d{8}_\d{6}\.html"', body), body[:400]
+    assert re.search(r"🌐 127\.0\.0\.1:\d+\r?\n❌ FAILED", body)
     assert telegram_api.calls("getUpdates") == []
     # Email arrived with the same report attached.
     [(sender, rcpts, msg)] = sink.messages
-    assert rcpts == ["qa@example.com"] and "FAILED" in str(msg["Subject"])
+    from email.header import decode_header, make_header
+
+    subject = str(make_header(decode_header(msg["Subject"])))
+    assert rcpts == ["qa@example.com"] and re.match(r"\[UI Automation\] 127\.0\.0\.1:\d+: ❌ FAILED", subject), subject
     assert any(part.get_filename() == "ui-test-report.html" for part in msg.walk())
 
 

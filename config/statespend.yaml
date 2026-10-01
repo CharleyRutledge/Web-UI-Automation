@@ -1,6 +1,7 @@
 # Whole-site audit of https://statespend.ie. Run it with:
-#   python -m ui_automation --config config/statespend.yaml -- site_audit tests/test_compliance.py
+#   python -m ui_automation --config config/statespend.yaml -- site_audit
 base_url: "https://statespend.ie"
+name: "statespend.ie site audit"
 browser: chromium
 headless: true
 timeout_ms: 30000
@@ -31,6 +32,7 @@ accessibility:
 # Irish / EU website requirements, checked on the home page before any cookie consent is given.
 compliance:
   enabled: true
+  report_only: false  # problems fail their check (the run still ends green with a warning)
   pages:
     - /
   checks: [privacy_notice, cookie_consent, accessibility_statement, company_details, contact_details]

@@ -9,9 +9,11 @@ from __future__ import annotations
 import time
 from urllib.parse import urlparse
 
+import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from pages.base_page import BasePage
+from ui_automation.compliance import Monitor, as_dicts, check_page
 from site_audit.conftest import SiteMap, same_site, short
 
 # Sites that refuse automated link checks (they answer bots with these) are "unverified", not broken.
@@ -193,3 +195,19 @@ def test_pages_are_accessible(site: BasePage, site_map: SiteMap) -> None:
         except AssertionError as exc:
             failures.append(str(exc).splitlines()[0])
     report(problems + failures, "page(s) with accessibility problems at or above the configured level")
+
+
+def test_meets_website_requirements(site: BasePage, site_map: SiteMap, request) -> None:
+    """Irish / EU website requirements on the home page, checked before any cookie consent is given."""
+    if not site.settings.compliance.enabled:
+        pytest.skip("website requirement checks are off (compliance.enabled: false)")
+    monitor = Monitor(site.page)  # before navigation: nothing may track before consent
+    site.goto_path(site_map.home)
+    site.page.wait_for_load_state("load")
+    site.wait_until_settled()
+    site.step("Check website requirements (before any consent is given)")
+    results = check_page(site.page, monitor, site.settings.compliance.checks)
+    request.node.compliance = [{"url": site.page.url, "results": as_dicts(results)}]
+    failed = [f"{r.title}: {r.detail} ({r.law})" for r in results if not r.passed]
+    if not site.settings.compliance.report_only:
+        report(failed, "website requirement(s) not met")

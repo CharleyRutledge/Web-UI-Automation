@@ -41,7 +41,8 @@ at `fail_on` severity (`none` = report only). Automated rules cannot prove confo
 still needs a person to check, following the W3C WCAG-EM method (scope, explore, sample, audit, report).
 The report and dashboard themselves are tested against WCAG 2.2 AA (axe, keyboard, focus, 320 px reflow).
 
-**Website requirements (Ireland / EU)** (`compliance:`, off by default): checks each page, before any
+**Website requirements (Ireland / EU)** (`compliance:`, always on; `report_only: true` lists problems
+without failing the run, for sites that aren't yours): checks each page, before any
 consent is given, for a privacy notice link (GDPR Art. 13/14), no tracking cookies or tracker requests
 before consent and a reject option (ePrivacy Regulations S.I. 336/2011, DPC guidance), an accessibility
 statement link, company details (Companies Act 2014 s.151, S.I. 68/2003), contact details and terms.
@@ -60,11 +61,12 @@ home page first, up to `audit.max_pages`. Every page found is then checked for:
 - load time against `audit.load_budget_ms`
 - HTTPS and security headers
 - a WCAG scan, with a copyable fix for each issue
+- Irish/EU website requirements on the home page
 
 Each test lists every problem it finds, not just the first.
 
 ```bash
-python -m ui_automation --config config/statespend.yaml -- site_audit tests/test_compliance.py
+python -m ui_automation --config config/statespend.yaml -- site_audit
 ```
 
 To audit another site, copy `config/statespend.yaml`, change `base_url`, and run it the same way. In GitHub,

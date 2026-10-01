@@ -1,6 +1,6 @@
 name: Site audit
 
-# Whole-site audit (site_audit/ + Irish/EU website requirements) of the site in a config file.
+# Whole-site audit (site_audit/, including the Irish/EU website requirements) of the site in a config file.
 # Weekly for statespend.ie; any other config/<site>.yaml can be run on demand.
 on:
   schedule:
@@ -19,6 +19,11 @@ on:
 
 permissions:
   contents: read
+
+# A newer run replaces one still in progress, so each change sends one report, not several.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   audit:
@@ -46,7 +51,7 @@ jobs:
           # Exit 1 means the audit ran and found problems on the site: that is the report's job, so the
           # workflow stays green with a warning. Anything else (crash, bad config, no tests) fails it.
           code=0
-          python -m ui_automation --config "$SITE_CONFIG" -- site_audit tests/test_compliance.py || code=$?
+          python -m ui_automation --config "$SITE_CONFIG" -- site_audit || code=$?
           if [ "$code" -eq 1 ]; then
             failed=$(python -c "import json,glob; d=json.load(open(sorted(glob.glob('reports/2*/summary.json'))[-1])); print(d['failed'] + d['errors'], 'of', d['total'])")
             echo "::warning title=Site audit findings::$failed checks found problems on the site. See the report (Telegram or the site-audit-report artifact)."

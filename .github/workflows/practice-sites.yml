@@ -16,6 +16,11 @@ on:
 permissions:
   contents: read
 
+# A newer run replaces one still in progress, so each change sends one report, not several.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   practice-sites:
     runs-on: ubuntu-latest

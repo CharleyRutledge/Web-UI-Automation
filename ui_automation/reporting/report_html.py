@@ -31,6 +31,7 @@ main { max-width:720px; margin:0 auto; padding:16px; }
 .hero { border-radius:14px; padding:20px; margin-bottom:16px; }
 .hero.pass { background:var(--pass-bg); color:var(--pass); }
 .hero.fail { background:var(--fail-bg); color:var(--fail); }
+.hero .site { margin:0 0 4px; font-weight:600; color:var(--text); overflow-wrap:anywhere; }
 .hero h1 { margin:0; font-size:26px; letter-spacing:.3px; }
 .hero p { margin:6px 0 0; color:var(--text); }
 .hero .meta { color:var(--text); opacity:.85; font-size:13px; margin-top:8px; overflow-wrap:anywhere; }
@@ -363,6 +364,16 @@ def _compliance_section(summary: RunSummary) -> str:
     return "".join(parts)
 
 
+def _local_time() -> str:
+    """Report time in Irish time (IST/GMT), where the readers are; UTC if the time zone data is missing."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo("Europe/Dublin")).strftime("%d %b %Y, %H:%M %Z")
+    except Exception:  # noqa: BLE001 - e.g. Windows without the tzdata package
+        return datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
+
+
 def render_summary_html(summary: RunSummary, ai_text: str | None = None) -> str:
     status_cls = "pass" if summary.ok else "fail"
     title = "PASSED" if summary.ok else "FAILED"
@@ -373,13 +384,14 @@ def render_summary_html(summary: RunSummary, ai_text: str | None = None) -> str:
     else:
         bad = summary.failed + summary.errors
         line = f"{bad} of {summary.total} tests failed. Details below."
-    when = datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
+    when = _local_time()
     meta = [when, f"took {_fmt_duration(summary.duration)}"]
     if summary.base_url:
         meta.append(f"site: {summary.base_url}")
 
+    site_line = f'<p class="site">{escape(summary.name)}</p>' if summary.name else ""
     parts = [
-        f'<section class="hero {status_cls}"><h1>{title}</h1><p>{escape(line)}</p>'
+        f'<section class="hero {status_cls}">{site_line}<h1>{title}</h1><p>{escape(line)}</p>'
         f'<div class="meta">{escape(" · ".join(meta))}</div></section>',
         '<section class="tiles">'
         + _tile(summary.passed, "Passed", "pass")
@@ -443,6 +455,6 @@ def render_summary_html(summary: RunSummary, ai_text: str | None = None) -> str:
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<meta http-equiv="Content-Security-Policy" content="{_CSP}">'
-        f"<title>UI tests: {title}</title><style>{_CSS}</style></head>"
+        f"<title>{escape(summary.name) + ': ' if summary.name else 'UI tests: '}{title}</title><style>{_CSS}</style></head>"
         f"<body><main>{''.join(parts)}</main><script>{_COPY_JS}</script></body></html>"
     )
