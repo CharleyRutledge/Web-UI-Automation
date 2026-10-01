@@ -85,6 +85,15 @@ class AuditSettings:
 
 
 @dataclass(frozen=True)
+class AppSettings:
+    """How to start and stop the app under test, for apps on this computer (see --start / --stop)."""
+    start: str = ""  # e.g. "npm run dev" or "docker compose up -d"
+    start_in: str = ""  # folder to run it in; relative paths are from where you run the tests
+    stop: str = ""  # e.g. "docker compose down" (commands that keep running are stopped without one)
+    start_timeout: int = 120  # seconds to wait for the app to answer
+
+
+@dataclass(frozen=True)
 class NotificationSettings:
     email: EmailSettings = field(default_factory=EmailSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
@@ -107,6 +116,7 @@ class Settings:
     accessibility: AccessibilitySettings = field(default_factory=AccessibilitySettings)
     compliance: ComplianceSettings = field(default_factory=ComplianceSettings)
     audit: AuditSettings = field(default_factory=AuditSettings)
+    app: AppSettings = field(default_factory=AppSettings)
     # Self-signed HTTPS certificates: "auto" accepts them for local addresses only (localhost, 192.168.x, ...);
     # "on" / "off" force it. Public sites are always held to real certificates under "auto".
     allow_self_signed: str = "auto"
@@ -249,6 +259,23 @@ def _pages(raw: Any, name: str) -> tuple[str, ...]:
     return tuple(p.strip() if p.strip().startswith(("/", "http://", "https://")) else "/" + p.strip() for p in raw)
 
 
+def _load_app(raw: Mapping[str, Any] | None) -> AppSettings:
+    raw = raw or {}
+
+    def text(key: str) -> str:
+        value = raw.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"settings.yaml: app.{key} must be text, got {value!r}")
+        return (value or "").strip()
+
+    return AppSettings(
+        start=text("start"),
+        start_in=text("start_in"),
+        stop=text("stop"),
+        start_timeout=_as_int(raw.get("start_timeout"), 120, "app.start_timeout", minimum=1),
+    )
+
+
 def _load_audit(raw: Mapping[str, Any] | None) -> AuditSettings:
     raw = raw or {}
     return AuditSettings(
@@ -375,6 +402,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         accessibility=_load_accessibility(_section(m, "accessibility")),
         compliance=_load_compliance(_section(m, "compliance")),
         audit=_load_audit(_section(m, "audit")),
+        app=_load_app(_section(m, "app")),
         name=_load_name(name_raw, base_url),
         allow_self_signed=_auto_on_off(m.get("allow_self_signed"), "allow_self_signed"),
         notifications=NotificationSettings(

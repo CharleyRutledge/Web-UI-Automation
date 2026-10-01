@@ -161,3 +161,104 @@ def test_app_server_reports_readiness_directly() -> None:
                        timeout=1.5)
     assert "did not answer within 1.5 s" in server.start()
     assert server.process is None
+
+
+# ------------------------------------------------------------------ apps started in the background (Docker)
+
+_LAUNCHER = """
+import subprocess, sys
+# Like `docker compose up -d`: start the server in the background, then exit successfully.
+proc = subprocess.Popen([sys.executable, "-m", "http.server", "{port}", "--bind", "127.0.0.1"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+open("server.pid", "w").write(str(proc.pid))
+print("launched", proc.pid)
+"""
+_STOPPER = """
+import os, signal
+# Like `docker compose down`.
+os.kill(int(open("server.pid").read()), signal.SIGTERM)
+print("stopped")
+"""
+
+
+def _docker_like_app(tmp_path: Path) -> tuple[Path, int]:
+    folder = _app_folder(tmp_path)
+    port = free_port()
+    (folder / "launch.py").write_text(_LAUNCHER.format(port=port))
+    (folder / "stop.py").write_text(_STOPPER)
+    return folder, port
+
+
+def _app_config(folder: Path, port: int, **app) -> dict:
+    return base_config(f"http://localhost:{port}", artifacts={"video": "off"}, app={
+        "start": f'"{sys.executable}" launch.py', "stop": f'"{sys.executable}" stop.py', "start_in": str(folder), **app})
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals in the stand-in stop script")
+def test_background_start_and_stop_command_from_settings(tmp_path: Path) -> None:
+    folder, port = _docker_like_app(tmp_path)
+    run = invoke_cli(tmp_path, ["site_audit", "-k", "loads or crawl"], config=_app_config(folder, port))
+    assert run.returncode == 0, run.output
+    assert "The app is up at" in run.output and "Stopped the app." in run.output
+    log = (run.run_dir / "app-server.log").read_text()
+    assert "launched" in log and "--- stop:" in log and "stopped" in log
+    time.sleep(0.5)
+    assert not _listening(port), "the stop command must have stopped the app"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals in the stand-in stop script")
+def test_app_already_running_is_left_alone(tmp_path: Path) -> None:
+    folder, port = _docker_like_app(tmp_path)
+    import subprocess
+
+    subprocess.run([sys.executable, "launch.py"], cwd=folder, check=True, capture_output=True)  # you started it
+    try:
+        for _ in range(50):
+            if _listening(port):
+                break
+            time.sleep(0.1)
+        run = invoke_cli(tmp_path, ["site_audit", "-k", "loads"], config=_app_config(folder, port))
+        assert run.returncode == 0, run.output
+        assert "already running" in run.output and "Stopped the app." not in run.output
+        assert _listening(port), "an app you started yourself must not be stopped"
+    finally:
+        subprocess.run([sys.executable, "stop.py"], cwd=folder, check=False, capture_output=True)
+
+
+def test_stop_command_failure_is_reported_but_results_are_kept(tmp_path: Path) -> None:
+    port = free_port()
+    folder = _app_folder(tmp_path)
+    run = invoke_cli(tmp_path, ["site_audit", "-k", "loads"], config=base_config(
+        f"http://localhost:{port}", artifacts={"video": "off"}),
+        cli_args=["--start", f'"{sys.executable}" -m http.server {port} --bind 127.0.0.1', "--start-in", str(folder),
+                  "--stop", f'"{sys.executable}" -c "import sys; sys.exit(4)"'])
+    assert run.returncode == 0 and run.summary["passed"] == 1, run.output
+    assert "Could not stop the app cleanly: the stop command" in run.output and "exited with code 4" in run.output
+    assert not _listening(port), "the start command's own process is still stopped"
+
+
+def test_failed_start_still_runs_the_stop_command(tmp_path: Path) -> None:
+    """A half-started app (e.g. one container up, one crashed) is cleaned up."""
+    marker = tmp_path / "stop-ran"
+    run = invoke_cli(tmp_path, ["scenarios/test_quick.py"], config=base_config(f"http://localhost:{free_port()}"),
+                     cli_args=["--start", f'"{sys.executable}" -c "import sys; sys.exit(1)"',
+                               "--stop", f'"{sys.executable}" -c "open(r\'{marker}\', \'w\').write(\'x\')"'])
+    assert run.returncode == 2 and "exited (code 1)" in run.output
+    assert marker.is_file()
+
+
+def test_no_start_tests_the_running_app_only(tmp_path: Path) -> None:
+    folder, port = _docker_like_app(tmp_path)
+    run = invoke_cli(tmp_path, ["scenarios/test_quick.py"], config=_app_config(folder, port), cli_args=["--no-start"])
+    assert run.returncode == 2 and "Nothing is answering" in run.output and not _listening(port)
+
+
+@pytest.mark.parametrize("raw, field", [("{start: [npm, run]}", "app.start"), ("{start_timeout: 0}", "app.start_timeout"),
+                                        ("{stop: 5}", "app.stop"), ("[1]", "'app'")])
+def test_app_settings_rejected(tmp_path: Path, raw: str, field: str) -> None:
+    from ui_automation.config import load_settings
+
+    cfg = tmp_path / "s.yaml"
+    cfg.write_text(f"base_url: http://localhost:3000\napp: {raw}\n")
+    with pytest.raises(ValueError, match=field.replace(".", r"\.")):
+        load_settings(cfg)
