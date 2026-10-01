@@ -6,7 +6,6 @@ on the server: if the crawler ever followed it, the rest of that role's pages wo
 
 from __future__ import annotations
 
-import os
 import secrets
 import threading
 import zipfile
@@ -71,6 +70,14 @@ class App:
                     return self._send(200, _page("Sign in", '<form method="post" action="/login2">'
                                       '<label>Email <input type="email" name="email"></label>'
                                       '<button type="submit">Next</button></form>'))
+                if path == "/login-late":  # the button does nothing until the page's script has started
+                    return self._send(200, _page("Sign in", '<form method="post" action="/login" id="f">'
+                                      '<label>Email <input type="email" name="email"></label>'
+                                      '<label>Password <input type="password" name="password"></label>'
+                                      '<button type="button" id="go">Sign in</button></form>'
+                                      "<script>setTimeout(function () { document.getElementById('go')"
+                                      ".onclick = function () { document.getElementById('f').submit(); }; }, 1500);"
+                                      "</script>"))
                 if user is None:
                     return self._send(302, headers={"Location": "/login"})
                 if path == "/logout":
@@ -206,7 +213,10 @@ def test_wrong_password_fails_that_role_clearly(tmp_path: Path, app: App) -> Non
     assert run.test("test_crawl_found_the_site[admin-")["outcome"] == "passed"
     t = run.test("test_crawl_found_the_site[viewer-")
     assert t["outcome"] == "error"  # the role's checks could not run at all
-    assert "Could not log in: role 'viewer': login did not succeed" in t["message"]
+    assert "Could not log in: role 'viewer': login did not succeed, now on /login" in t["message"]
+    text = t["message"] + t["details"]
+    assert 'the page said: "Wrong email or password"' in text  # why, in the app's own words
+    assert "Evidence: after pressing the button: POST /login -> 200" in text  # what the browser saw
     assert "not-the-password" not in run.output + t["message"]
 
 
@@ -216,6 +226,14 @@ def test_missing_password_says_which_variable(tmp_path: Path, app: App) -> None:
     t = run.test("test_crawl_found_the_site[admin-")
     assert t["outcome"] == "error"
     assert "the password comes from T_ADMIN_PW, which is not set" in t["message"] and ".env" in t["message"]
+
+
+def test_login_form_that_only_works_once_the_page_has_started(tmp_path: Path, app: App) -> None:
+    """Apps that show the form before their script is ready (common with React, Vue and similar): a click
+    that comes too early does nothing, so the login is tried again on a settled page."""
+    cfg = roles_config(app.url, login_url="/login-late", include_public=False)
+    run = invoke_cli(tmp_path, ["site_audit", "-k", "crawl"], config=cfg, env=ENV)
+    assert set(outcomes(run).values()) == {"passed"}, run.output
 
 
 def test_two_step_login(tmp_path: Path, app: App) -> None:
@@ -239,7 +257,10 @@ def test_logged_in_check_text(tmp_path: Path, app: App) -> None:
     assert set(outcomes(run).values()) == {"passed"}, run.output
     cfg = roles_config(app.url, include_public=False, logged_in_check="Welcome back, captain")
     run = invoke_cli(tmp_path / "2", ["site_audit", "-k", "crawl"], config=cfg, env=ENV)
-    assert "auth.logged_in_check ('Welcome back, captain') was not found" in run.test("test_crawl_found_the_site[admin-")["message"]
+    t = run.test("test_crawl_found_the_site[admin-")
+    text = t["message"] + t["details"]
+    assert "now on /dashboard (auth.logged_in_check 'Welcome back, captain' was not found)" in text
+    assert "the login may have worked" in text
 
 
 def test_passwords_never_reach_output_reports_traces_or_videos(roles_run) -> None:
