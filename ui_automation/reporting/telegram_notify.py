@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,14 @@ def _api_base() -> str:
     return os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
 
 
+# Waits before the 2nd and 3rd attempt. Dropped connections (e.g. an SSLError mid-upload), timeouts,
+# rate limits (429) and Telegram server errors (5xx) are retried; other errors are final.
+_RETRY_DELAYS: tuple[float, ...] = (3.0, 10.0)
+_MAX_RETRY_AFTER = 30.0
+_DOCUMENT_LIMIT = 50 * 1024 * 1024  # Bot API upload limit
+_sleep = time.sleep  # replaced in tests
+
+
 def _call(
     token: str,
     method: str,
@@ -30,19 +39,42 @@ def _call(
 ) -> dict[str, Any]:
     """POST to the Bot API. The URL embeds the bot token, so it must never reach an error message."""
     url = f"{_api_base()}/bot{token}/{method}"
-    try:
-        if files:
-            response = requests.post(url, data=payload, files=files, timeout=timeout)
-        else:
-            response = requests.post(url, json=payload, timeout=timeout)
-    except requests.RequestException as exc:
-        raise RuntimeError(f"Telegram {method} request failed ({type(exc).__name__})") from None
-    if not response.ok:
-        raise RuntimeError(f"Telegram {method} returned HTTP {response.status_code}")
-    try:
-        return response.json()
-    except ValueError:
-        raise RuntimeError(f"Telegram {method} returned a non-JSON response") from None
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        wait = _RETRY_DELAYS[attempt] if attempt < len(_RETRY_DELAYS) else None
+        try:
+            if files:
+                response = requests.post(url, data=payload, files=files, timeout=timeout)
+            else:
+                response = requests.post(url, json=payload, timeout=timeout)
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            error = f"Telegram {method} request failed ({type(exc).__name__})"
+            if wait is None:
+                raise RuntimeError(error) from None
+            print(f"{error}; retrying in {wait:g}s")
+            _sleep(wait)
+            continue
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Telegram {method} request failed ({type(exc).__name__})") from None
+        if response.status_code == 429 or response.status_code >= 500:
+            if wait is None:
+                raise RuntimeError(f"Telegram {method} returned HTTP {response.status_code}")
+            if response.status_code == 429:
+                try:
+                    wait = max(wait, float(response.json()["parameters"]["retry_after"]))
+                except (ValueError, KeyError, TypeError):
+                    pass
+                if wait > _MAX_RETRY_AFTER:
+                    raise RuntimeError(f"Telegram {method} returned HTTP 429 (retry after {wait:g}s)")
+            print(f"Telegram {method} returned HTTP {response.status_code}; retrying in {wait:g}s")
+            _sleep(wait)
+            continue
+        if not response.ok:
+            raise RuntimeError(f"Telegram {method} returned HTTP {response.status_code}")
+        try:
+            return response.json()
+        except ValueError:
+            raise RuntimeError(f"Telegram {method} returned a non-JSON response") from None
+    raise AssertionError("unreachable")
 
 
 _CAPTION_LIMIT = 1024  # Telegram's limit for a document caption
@@ -125,13 +157,27 @@ def send_run_telegram(
     caption = build_caption(summary)
     if attachment is not None and attachment.is_file():
         name = f"ui-tests-{'passed' if summary.ok else 'failed'}-{summary.run_dir.name if summary.run_dir else 'run'}.html"
-        _call(
-            telegram.bot_token,
-            "sendDocument",
-            {"chat_id": chat_id, "caption": caption},
-            files={"document": (name, attachment.read_bytes(), "text/html")},
-            timeout=telegram.timeout_seconds,
-        )
+        data = attachment.read_bytes()
+        try:
+            if len(data) > _DOCUMENT_LIMIT:
+                raise RuntimeError(f"the report is {len(data) // (1024 * 1024)} MB, over Telegram's 50 MB limit")
+            _call(
+                telegram.bot_token,
+                "sendDocument",
+                {"chat_id": chat_id, "caption": caption},
+                files={"document": (name, data, "text/html")},
+                timeout=telegram.timeout_seconds,
+            )
+            return
+        except RuntimeError as exc:
+            problem = str(exc)
+        # Never leave the reader with nothing: send the results as text, with where to find the report.
+        print(f"Telegram: could not attach the report ({problem}); sending the results as a message instead")
+        body = caption.replace("Full details are in the attached report.", "").strip()
+        where = f"\n\nFull report: {summary.run_url}" if summary.run_url else ""
+        text = f"{body}\n\n(The report could not be attached: {problem}.){where}"
+        _call(telegram.bot_token, "sendMessage", {"chat_id": chat_id, "text": text[:4096]},
+              timeout=telegram.timeout_seconds)
     else:
         _call(
             telegram.bot_token, "sendMessage", {"chat_id": chat_id, "text": caption}, timeout=telegram.timeout_seconds

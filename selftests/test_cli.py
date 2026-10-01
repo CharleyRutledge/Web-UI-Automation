@@ -164,7 +164,8 @@ def test_full_run_with_every_notification(run_cli, site, smtp, telegram_api, ant
 
 
 def test_notification_failures_never_break_the_run(run_cli, site, telegram_api, anthropic_api) -> None:
-    telegram_api.script("sendDocument", Reply(500, {"ok": False}))
+    telegram_api.script("sendDocument", Reply(401, {"ok": False}))  # a bad token: permanent, so not retried
+    telegram_api.script("sendMessage", Reply(401, {"ok": False}))  # ...and the text fallback fails too
     anthropic_api.script("/v1/messages", *[Reply(400, anthropic_error("invalid_request_error", "credit too low"))] * 3)
     cfg = base_config(site.url, ai={"enabled": True, "timeout_seconds": 5},
                       notifications={"telegram": {"enabled": True, "bot_token": "1:x", "chat_id": "5"},
@@ -174,7 +175,8 @@ def test_notification_failures_never_break_the_run(run_cli, site, telegram_api, 
                                               "ANTHROPIC_API_KEY": "k", "ANTHROPIC_BASE_URL": anthropic_api.url})
     assert r.returncode == 1  # the test result, not a notification error
     assert "Claude analysis skipped" in r.output and "credit too low" in r.output
-    assert "Telegram notification skipped: Telegram sendDocument returned HTTP 500" in r.output
+    assert "could not attach the report (Telegram sendDocument returned HTTP 401)" in r.output
+    assert "Telegram notification skipped: Telegram sendMessage returned HTTP 401" in r.output
     assert "Email notification skipped" in r.output
     assert (r.run_dir / "summary.html").is_file() and "Traceback" not in r.output
 

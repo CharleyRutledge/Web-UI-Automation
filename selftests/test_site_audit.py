@@ -4,6 +4,7 @@ problem of each kind, and a clean one. Every problem must be found; nothing else
 from __future__ import annotations
 
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterator
@@ -30,7 +31,10 @@ FLAWED = {
 }
 CLEAN = {
     "/": _page("Home", '<h1>Home</h1><a href="/about">About</a>'),
-    "/about": _page("About", '<h1>About</h1><a href="/">Home</a>'),
+    # Built in the browser after a slow request, like a React/Vue page: the audit must wait for it.
+    "/about": _page("About", '<div id="app">Loading…</div><script>fetch("/slow").then(() => {'
+                             'document.getElementById("app").innerHTML = \'<h1>About</h1><a href="/">Home</a>\';})</script>'),
+    "/slow": "{}",
 }
 SECURE_HEADERS = {"Strict-Transport-Security": "max-age=31536000", "X-Content-Type-Options": "nosniff",
                   "Referrer-Policy": "strict-origin", "Content-Security-Policy": "frame-ancestors 'none'"}
@@ -40,6 +44,8 @@ def _serve(pages: dict[str, str]) -> Iterator[str]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             path = self.path.split("?")[0]
+            if path == "/slow":
+                time.sleep(1.5)
             body = pages.get(path)
             self.send_response(200 if body else 404)
             self.send_header("Content-Type", "application/pdf" if path.endswith(".pdf") else "text/html")

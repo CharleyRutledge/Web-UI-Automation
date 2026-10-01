@@ -31,6 +31,7 @@ def test_page_meets_website_requirements(
     site = BasePage(page, settings, request, test_artifacts_dir)
     site.goto_path(compliance_path)
     page.wait_for_load_state("load")
+    site.wait_until_settled()  # footers and cookie banners are often added after the page loads
     site.step("Check website requirements (before any consent is given)")
     results = check_page(page, monitor, settings.compliance.checks)
     request.node.compliance = [{"url": page.url, "results": as_dicts(results)}]

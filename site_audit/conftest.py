@@ -58,6 +58,10 @@ def crawl(browser: Browser, home: str, max_pages: int, wait_until: str) -> SiteM
             try:
                 response = page.goto(url, wait_until=wait_until)  # type: ignore[arg-type]
                 page.wait_for_load_state("load", timeout=15_000)
+                try:  # links that pages add after loading (React, Vue, ...)
+                    page.wait_for_load_state("networkidle", timeout=5_000)
+                except PlaywrightError:
+                    pass
             except PlaywrightError as exc:
                 site.problems[url] = exc.message.splitlines()[0]
                 site.pages.append(url)

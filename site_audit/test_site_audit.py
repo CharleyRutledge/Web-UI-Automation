@@ -27,6 +27,7 @@ def visit(site: BasePage, url: str, home: str, problems: list[str]):
     except PlaywrightError as exc:
         problems.append(f"{short(url, home)}: did not load ({exc.message.splitlines()[0]})")
         return None
+    site.wait_until_settled()
     return response
 
 
