@@ -6,7 +6,6 @@ on the server: if the crawler ever followed it, the rest of that role's pages wo
 
 from __future__ import annotations
 
-import os
 import secrets
 import threading
 import zipfile
