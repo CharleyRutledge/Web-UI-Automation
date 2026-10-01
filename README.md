@@ -81,6 +81,36 @@ checks only run when you start them in **Actions** (the site audit only with the
 self-tests and security scan still run on every push and pull request; they use local test servers and
 send nothing.
 
+## Test behind a login, with roles
+
+The site audit can log in and test as several kinds of user. It runs once logged out and once per role,
+and the report labels every check with its role (e.g. `admin · chromium`).
+
+```yaml
+auth:
+  login_url: /login
+  roles:
+    - name: admin
+      username: "${APP_ADMIN_USER}"
+      password: "${APP_ADMIN_PASSWORD}"
+      start: /dashboard
+    - name: viewer
+      username: "${APP_VIEWER_USER}"
+      password: "${APP_VIEWER_PASSWORD}"
+      must_not_access: [/admin]   # checked: this role must be refused these pages
+```
+
+- **Credentials** come from environment variables or the git-ignored `.env`, never from the settings file.
+  A missing one is named in the error.
+- **The login form** is found automatically (email or username box, password box, log-in button),
+  including two-step logins where the password comes on a second screen. Set `username_field`,
+  `password_field`, `submit` or `logged_in_check` if your form needs them.
+- **No recording of the login.** It runs in a browser session with no video, trace or screenshot. Only the
+  session it creates is used by the audit, so a password cannot end up in a report.
+- **Safe crawling.** Log-out, delete and similar links are never followed or requested, so roles stay
+  logged in and no data is changed.
+- **Site-wide checks** (HTTPS, website requirements) run once, not again for every role.
+
 ## Test an app on your own computer (localhost)
 
 Apps on your computer or local network (`localhost`, `127.0.0.1`, `192.168.x.x`, `*.local`) are tested

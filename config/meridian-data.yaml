@@ -33,6 +33,30 @@ app:
   start_in: "C:/Users/amkei/Repos/meridiandata-my-local-app"
   start_timeout: 120
 
+# Logging in: the audit runs logged out, then once per role below. Same variable names as Meridian Data's own
+# E2E tests; put the values in this folder's .env file (never here, never on GitHub):
+#   E2E_DEPOSITOR_EMAIL=test-claude@meridiandata.test
+#   E2E_DEPOSITOR_PASSWORD=...
+#   E2E_BENEFICIARY_EMAIL=beneficiary@meridiandata.test
+#   E2E_BENEFICIARY_PASSWORD=...
+# A role whose variables are missing is reported as "could not log in"; the other roles still run.
+# The admin role is left out until there is a test-only admin account (never a production one).
+# must_not_access: pages a role must be refused (HTTP 401/403/404 or sent to the login page).
+auth:
+  login_url: /login
+  username_field: "input[placeholder='you@company.eu']"
+  logged_in_check: "/app"          # the login lands on /app
+  roles:
+    - name: depositor
+      username: "${E2E_DEPOSITOR_EMAIL}"
+      password: "${E2E_DEPOSITOR_PASSWORD}"
+      start: /app
+    - name: beneficiary
+      username: "${E2E_BENEFICIARY_EMAIL}"
+      password: "${E2E_BENEFICIARY_PASSWORD}"
+      start: /app
+      # must_not_access: [/app/deposits/new]   # e.g. if beneficiaries must not create deposits
+
 # Your own app: serious accessibility problems fail their check, so they get fixed before release.
 accessibility:
   enabled: true

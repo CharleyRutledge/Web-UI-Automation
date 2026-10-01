@@ -94,6 +94,28 @@ class AppSettings:
 
 
 @dataclass(frozen=True)
+class RoleSettings:
+    """One kind of user to log in as. Credentials come from environment variables / .env, e.g. ${APP_ADMIN_PASSWORD}."""
+    name: str
+    username: str = ""
+    password: str = ""
+    start: str = ""  # page to start from after logging in (default: where the login lands)
+    must_not_access: tuple[str, ...] = ()  # pages this role must be refused (permission checks)
+
+
+@dataclass(frozen=True)
+class AuthSettings:
+    """Logging in for the site audit. Without roles, only the logged-out site is tested."""
+    login_url: str = "/login"
+    username_field: str = ""  # CSS selector; empty = found automatically (email / username box)
+    password_field: str = ""  # CSS selector; empty = the password box
+    submit: str = ""  # CSS selector; empty = the form's log-in / submit button
+    logged_in_check: str = ""  # text, CSS selector or URL part that shows the login worked (empty = auto)
+    include_public: bool = True  # also audit the site logged out
+    roles: tuple[RoleSettings, ...] = ()
+
+
+@dataclass(frozen=True)
 class NotificationSettings:
     email: EmailSettings = field(default_factory=EmailSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
@@ -117,6 +139,7 @@ class Settings:
     compliance: ComplianceSettings = field(default_factory=ComplianceSettings)
     audit: AuditSettings = field(default_factory=AuditSettings)
     app: AppSettings = field(default_factory=AppSettings)
+    auth: AuthSettings = field(default_factory=AuthSettings)
     # Self-signed HTTPS certificates: "auto" accepts them for local addresses only (localhost, 192.168.x, ...);
     # "on" / "off" force it. Public sites are always held to real certificates under "auto".
     allow_self_signed: str = "auto"
@@ -257,6 +280,48 @@ def _pages(raw: Any, name: str) -> tuple[str, ...]:
     if not isinstance(raw, (list, tuple)) or not raw or not all(isinstance(p, str) and p.strip() for p in raw):
         raise ValueError(f"settings.yaml: {name} must be a list of paths like '/' or '/contact'")
     return tuple(p.strip() if p.strip().startswith(("/", "http://", "https://")) else "/" + p.strip() for p in raw)
+
+
+_ROLE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,30}$")
+
+
+def _load_auth(raw: Mapping[str, Any] | None) -> AuthSettings:
+    raw = raw or {}
+
+    def text(m: Mapping[str, Any], key: str, where: str) -> str:
+        value = m.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"settings.yaml: {where}.{key} must be text, got {value!r}")
+        return (value or "").strip()
+
+    roles_raw = raw.get("roles") or []
+    if not isinstance(roles_raw, list):
+        raise ValueError("settings.yaml: auth.roles must be a list of roles")
+    roles: list[RoleSettings] = []
+    for i, item in enumerate(roles_raw):
+        role = _as_mapping(item, f"settings.yaml: auth.roles[{i}]")
+        name = text(role, "name", f"auth.roles[{i}]")
+        if not _ROLE_NAME.match(name):
+            raise ValueError(f"settings.yaml: auth.roles[{i}].name must be a short word like 'admin', got {name!r}")
+        if name == "public" or any(r.name == name for r in roles):
+            raise ValueError(f"settings.yaml: auth.roles: the name {name!r} is used twice or reserved")
+        blocked = role.get("must_not_access") or []
+        roles.append(RoleSettings(
+            name=name,
+            username=text(role, "username", f"auth.roles.{name}"),
+            password=text(role, "password", f"auth.roles.{name}"),
+            start=text(role, "start", f"auth.roles.{name}"),
+            must_not_access=_pages(blocked, f"auth.roles.{name}.must_not_access") if blocked else (),
+        ))
+    return AuthSettings(
+        login_url=text(raw, "login_url", "auth") or "/login",
+        username_field=text(raw, "username_field", "auth"),
+        password_field=text(raw, "password_field", "auth"),
+        submit=text(raw, "submit", "auth"),
+        logged_in_check=text(raw, "logged_in_check", "auth"),
+        include_public=_as_bool(raw.get("include_public"), True, "auth.include_public"),
+        roles=tuple(roles),
+    )
 
 
 def _load_app(raw: Mapping[str, Any] | None) -> AppSettings:
@@ -403,6 +468,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         compliance=_load_compliance(_section(m, "compliance")),
         audit=_load_audit(_section(m, "audit")),
         app=_load_app(_section(m, "app")),
+        auth=_load_auth(_section(m, "auth")),
         name=_load_name(name_raw, base_url),
         allow_self_signed=_auto_on_off(m.get("allow_self_signed"), "allow_self_signed"),
         notifications=NotificationSettings(
