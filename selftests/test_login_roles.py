@@ -225,6 +225,14 @@ def test_two_step_login(tmp_path: Path, app: App) -> None:
                              "test_crawl_found_the_site[viewer-chromium]": "passed"}, run.output
 
 
+def test_shipped_meridian_config_has_no_credentials() -> None:
+    import yaml
+
+    text = (Path(__file__).resolve().parents[1] / "config" / "meridian-data.yaml").read_text()
+    for role in yaml.safe_load(text)["auth"]["roles"]:
+        assert role["username"].startswith("${") and role["password"].startswith("${"), role["name"]
+
+
 def test_logged_in_check_text(tmp_path: Path, app: App) -> None:
     cfg = roles_config(app.url, include_public=False, logged_in_check="Dashboard for")
     run = invoke_cli(tmp_path, ["site_audit", "-k", "crawl"], config=cfg, env=ENV)
