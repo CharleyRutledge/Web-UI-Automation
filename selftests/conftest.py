@@ -25,6 +25,7 @@ def _no_real_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     """Never let a developer's or CI's real secrets reach a self-test (they must set their own)."""
     for name in SECRET_ENV:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("WEB_UI_NO_DOTENV", "1")  # nor the keys in a developer's .env file
 
 
 @pytest.fixture(scope="session")

@@ -173,6 +173,25 @@ def main(argv: list[str] | None = None) -> int:
         help="Website to test (overrides base_url in the settings file), e.g. --url https://example.ie",
     )
     parser.add_argument(
+        "--start",
+        default=None,
+        metavar="COMMAND",
+        help='Start the app first and stop it afterwards, e.g. --start "npm run dev" (waits until the URL answers).',
+    )
+    parser.add_argument(
+        "--start-in",
+        default=None,
+        metavar="FOLDER",
+        help="Folder to run the --start command in (default: the current folder), e.g. --start-in ../meridian-data",
+    )
+    parser.add_argument(
+        "--start-timeout",
+        type=float,
+        default=120.0,
+        metavar="SECONDS",
+        help="How long to wait for the app to answer after --start (default: 120).",
+    )
+    parser.add_argument(
         "--config",
         dest="config",
         default=None,
@@ -186,6 +205,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = _project_root()
+    from ui_automation.env import load_dotenv
+
+    # Your keys for runs on this computer (git-ignored). The framework's own self-tests switch this off.
+    loaded = [] if os.environ.get("WEB_UI_NO_DOTENV") else load_dotenv(root / ".env")
+    if loaded:
+        print(f"Loaded {', '.join(sorted(loaded))} from .env")
 
     if args.setup:
         return setup_project(root, include_mcp=args.with_mcp)
@@ -214,6 +239,15 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(f"Invalid configuration: {exc}", file=sys.stderr)
         return 2
+
+    from ui_automation.local import AppServer, check_running, is_local
+
+    if not args.start and is_local(settings.base_url):
+        # An app on this computer that is not running would fail every test with browser errors: say so plainly.
+        problem = check_running(settings.base_url)
+        if problem:
+            print(problem, file=sys.stderr)
+            return 2
 
     reports_dir = reports_root(root)
     try:
@@ -249,7 +283,27 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Playwright output: {playwright_output}")
     print(f"Video mode: {settings.video_mode}")
 
-    exit_code = _run_pytest(cmd, root)
+    server: AppServer | None = None
+    if args.start:
+        start_dir = Path(args.start_in).expanduser().resolve() if args.start_in else Path.cwd()
+        if not start_dir.is_dir():
+            print(f"--start-in: {start_dir} is not a folder", file=sys.stderr)
+            return 2
+        print(f"Starting the app: {args.start} (in {start_dir}); waiting for {settings.base_url} ...")
+        server = AppServer(args.start, settings.base_url, timeout=args.start_timeout, cwd=start_dir,
+                           log=run_dir / "app-server.log")
+        problem = server.start()
+        if problem:
+            print(f"Could not start the app: {problem}", file=sys.stderr)
+            return 2
+        print(f"The app is up at {settings.base_url}.")
+
+    try:
+        exit_code = _run_pytest(cmd, root)
+    finally:
+        if server is not None:
+            server.stop()
+            print("Stopped the app.")
 
     # pytest has exited, so report.html and summary.json are complete: now analyse and notify.
     from ui_automation.reporting.pipeline import notify_run

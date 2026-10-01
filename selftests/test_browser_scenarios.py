@@ -21,7 +21,9 @@ def run(tmp_path_factory: pytest.TempPathFactory, site, tls_site) -> CliRun:
     result = invoke_cli(
         tmp_path_factory.mktemp("scenarios"),
         ["scenarios/test_browser_scenarios.py"],
-        config=base_config(site.url),
+        # The local test servers would otherwise get the self-signed allowance; this run checks that an
+        # untrusted certificate is reported as a failure, as it is for any public site.
+        config=base_config(site.url, allow_self_signed="off"),
         env={"SCENARIO_TLS_URL": tls_site.url + "/"},
     )
     assert result.run_dir is not None, result.output

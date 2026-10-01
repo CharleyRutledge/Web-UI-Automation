@@ -79,6 +79,9 @@ class AuditSettings:
     max_pages: int = 15  # pages visited, home first, breadth-first
     load_budget_ms: int = 5000  # a page slower than this to become usable is reported
     check_external_links: bool = True  # also check links to other sites (capped at 60)
+    # HTTPS and security headers: "auto" checks public sites and skips local ones (localhost, 192.168.x, ...),
+    # where development servers rarely have them; "on" / "off" force it.
+    security_checks: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -104,6 +107,9 @@ class Settings:
     accessibility: AccessibilitySettings = field(default_factory=AccessibilitySettings)
     compliance: ComplianceSettings = field(default_factory=ComplianceSettings)
     audit: AuditSettings = field(default_factory=AuditSettings)
+    # Self-signed HTTPS certificates: "auto" accepts them for local addresses only (localhost, 192.168.x, ...);
+    # "on" / "off" force it. Public sites are always held to real certificates under "auto".
+    allow_self_signed: str = "auto"
     name: str = ""  # what the reports call this run, e.g. "statespend.ie site audit" (default: the site's host)
 
     @property
@@ -249,7 +255,27 @@ def _load_audit(raw: Mapping[str, Any] | None) -> AuditSettings:
         max_pages=_as_int(raw.get("max_pages"), 15, "audit.max_pages", minimum=1),
         load_budget_ms=_as_int(raw.get("load_budget_ms"), 5000, "audit.load_budget_ms", minimum=100),
         check_external_links=_as_bool(raw.get("check_external_links"), True, "audit.check_external_links"),
+        security_checks=_auto_on_off(raw.get("security_checks"), "audit.security_checks"),
     )
+
+
+def _auto_on_off(raw: Any, name: str) -> str:
+    if raw is None:
+        return "auto"
+    if isinstance(raw, bool):  # YAML reads on/off/true/false as booleans
+        return "on" if raw else "off"
+    mode = str(raw).strip().lower()
+    if mode not in ("auto", "on", "off"):
+        raise ValueError(f"settings.yaml: {name} must be auto, on or off, got {raw!r}")
+    return mode
+
+
+def accepts_self_signed(settings: Settings, url: str | None = None) -> bool:
+    """Whether the browser may accept self-signed certificates when testing `url` (default: base_url)."""
+    from ui_automation.local import is_local
+
+    mode = settings.allow_self_signed
+    return mode == "on" or (mode == "auto" and is_local(url or settings.base_url))
 
 
 def _load_compliance(raw: Mapping[str, Any] | None) -> ComplianceSettings:
@@ -350,6 +376,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         compliance=_load_compliance(_section(m, "compliance")),
         audit=_load_audit(_section(m, "audit")),
         name=_load_name(name_raw, base_url),
+        allow_self_signed=_auto_on_off(m.get("allow_self_signed"), "allow_self_signed"),
         notifications=NotificationSettings(
             email=_load_email(_section(notif_raw, "email")),
             telegram=_load_telegram(_section(notif_raw, "telegram")),

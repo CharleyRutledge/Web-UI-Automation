@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from playwright.sync_api import BrowserContext, Playwright, expect
 
-from ui_automation.config import Settings, load_settings
+from ui_automation.config import Settings, accepts_self_signed, load_settings
 from ui_automation.reporting.pipeline import finalize_run
 
 _VSCODE_PYTHON_EXTENSION_ID = "ms-python.python"
@@ -160,6 +160,9 @@ def browser_context_args(
         "height": settings.viewport_height,
     }
     context_args["strict_selectors"] = settings.strict_selectors
+    if accepts_self_signed(settings):
+        # Apps on this computer / the local network often use self-signed development certificates.
+        context_args["ignore_https_errors"] = True
     return context_args
 
 

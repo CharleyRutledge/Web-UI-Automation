@@ -77,7 +77,8 @@ def invoke_cli(
         cfg_path.write_text(yaml.safe_dump(config), encoding="utf-8")
         args += ["--config", str(cfg_path)]
     full_env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
-    full_env.update({"WEB_UI_REPORTS_DIR": str(reports), "PYTHONUNBUFFERED": "1"}, **(env or {}))
+    # WEB_UI_NO_DOTENV: a developer's real .env (bot token, API key) must never reach a self-test run.
+    full_env.update({"WEB_UI_REPORTS_DIR": str(reports), "PYTHONUNBUFFERED": "1", "WEB_UI_NO_DOTENV": "1"}, **(env or {}))
     cmd = [sys.executable, "-m", "ui_automation", *args, "--", *pytest_args]
     proc = subprocess.Popen(cmd, cwd=REPO, env=full_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, start_new_session=True)

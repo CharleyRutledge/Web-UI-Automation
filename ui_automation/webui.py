@@ -208,7 +208,7 @@ def create_app(
     from flask import Flask, abort, redirect, request, send_from_directory, url_for
 
     root = _project_root()
-    reports_dir = (reports_dir or reports_root(root)).resolve()
+    reports_dir = (Path(reports_dir) if reports_dir else reports_root(root)).resolve()
     hosts = _LOCAL_HOSTS | (allowed_hosts or frozenset())
 
     app = Flask(__name__)

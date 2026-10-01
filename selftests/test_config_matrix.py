@@ -219,3 +219,30 @@ def test_audit_defaults_and_values(tmp_path: Path) -> None:
 def test_audit_rejected(tmp_path: Path, raw: str, field: str) -> None:
     with pytest.raises(ValueError, match=field.replace(".", r"\.")):
         load(tmp_path, BASE + f"audit: {raw}\n")
+
+
+@pytest.mark.parametrize("raw, expected", [(None, "auto"), ("auto", "auto"), ("on", "on"), ("off", "off"),
+                                           ("'ON'", "on"), ("true", "on"), ("false", "off")])
+def test_auto_on_off_settings(tmp_path: Path, raw, expected: str) -> None:
+    text = BASE + ("" if raw is None else f"allow_self_signed: {raw}\naudit: {{security_checks: {raw}}}\n")
+    s = load(tmp_path, text)
+    assert s.allow_self_signed == expected and s.audit.security_checks == expected
+
+
+@pytest.mark.parametrize("field, text", [("allow_self_signed", "allow_self_signed: sometimes\n"),
+                                         ("audit.security_checks", "audit: {security_checks: 2}\n")])
+def test_auto_on_off_rejected(tmp_path: Path, field: str, text: str) -> None:
+    with pytest.raises(ValueError, match=field.replace(".", r"\.")):
+        load(tmp_path, BASE + text)
+
+
+@pytest.mark.parametrize(
+    "mode, url, accepted",
+    [("auto", "http://localhost:3000", True), ("auto", "https://statespend.ie", False),
+     ("off", "http://localhost:3000", False), ("on", "https://statespend.ie", True)],
+)
+def test_accepts_self_signed(tmp_path: Path, mode: str, url: str, accepted: bool) -> None:
+    from ui_automation.config import accepts_self_signed
+
+    s = load(tmp_path, f"base_url: {url}\nallow_self_signed: {mode}\n")
+    assert accepts_self_signed(s) is accepted

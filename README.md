@@ -80,6 +80,29 @@ checks only run when you start them in **Actions** (the site audit only with the
 self-tests and security scan still run on every push and pull request; they use local test servers and
 send nothing.
 
+## Test an app on your own computer (localhost)
+
+Apps on your computer or local network (`localhost`, `127.0.0.1`, `192.168.x.x`, `*.local`) are tested
+from **your computer**: GitHub's machines cannot reach them.
+
+```bash
+# The app is already running:
+python -m ui_automation --config config/meridian-data.yaml -- site_audit
+# Another port:
+python -m ui_automation --config config/meridian-data.yaml --url http://localhost:5173 -- site_audit
+# Let the tests start the app, wait until it answers, and stop it afterwards:
+python -m ui_automation --config config/meridian-data.yaml --start "npm run dev" --start-in ../meridian-data -- site_audit
+```
+
+- If nothing is answering at the address, the app says so and stops. It runs no tests and creates no
+  empty report.
+- With `--start`, the app's own output is saved as `app-server.log` in the run folder. If the app fails
+  to start, or doesn't answer within `--start-timeout` (120 s), the run stops and the app is shut down.
+- Self-signed HTTPS certificates are accepted for local addresses only. The HTTPS and security-header
+  checks are left for the deployed site (`audit.security_checks: on` runs them locally too).
+- For Telegram reports from your computer, copy `.env.example` to `.env` and fill in your keys. `.env`
+  is git-ignored and never leaves your computer; GitHub runs use the repository secrets.
+
 ## Testing the framework itself
 
 The framework has its own test suite in `selftests/` (separate from the UI tests in `tests/`). Every test

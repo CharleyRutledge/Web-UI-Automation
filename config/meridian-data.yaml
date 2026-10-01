@@ -1,0 +1,52 @@
+# Meridian Data, running on this computer. Run it with (from this folder):
+#   python -m ui_automation --config config/meridian-data.yaml -- site_audit
+# Let the tests start and stop the app too (adjust the command and folder to your project):
+#   python -m ui_automation --config config/meridian-data.yaml --start "npm run dev" --start-in ../meridian-data -- site_audit
+# A different port? Add --url http://localhost:5173 (or change base_url below).
+base_url: "http://localhost:3000"
+name: "Meridian Data (local)"
+browser: chromium
+headless: true
+timeout_ms: 30000
+
+viewport:
+  width: 1280
+  height: 720
+
+screenshot_full_page: false
+
+artifacts:
+  video: on
+  tracing: retain-on-failure
+  navigation_wait_until: domcontentloaded
+
+ai:
+  enabled: true
+  model: claude-sonnet-5-5
+  max_tokens: 2048
+
+# Your own app: serious accessibility problems fail their check, so they get fixed before release.
+accessibility:
+  enabled: true
+  standard: wcag21aa
+  fail_on: serious
+
+# Irish / EU website requirements, checked on the home page before any cookie consent is given.
+compliance:
+  enabled: true
+  report_only: false
+  pages:
+    - /
+  checks: [privacy_notice, cookie_consent, accessibility_statement, contact_details]
+
+audit:
+  max_pages: 25
+  load_budget_ms: 8000  # development servers build pages on first visit; the deployed app should be faster
+  check_external_links: true
+  security_checks: auto  # HTTPS and security headers are skipped on localhost; checked when deployed
+
+notifications:
+  telegram:
+    enabled: true
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    chat_id: "${TELEGRAM_CHAT_ID}"
