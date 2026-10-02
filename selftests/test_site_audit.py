@@ -221,7 +221,7 @@ def test_every_browser_audits_the_pages_and_site_wide_checks_run_once(tmp_path: 
     if missing_browsers(["firefox"]):
         pytest.skip("Firefox is not installed here (CI installs it: python -m playwright install firefox)")
     for url in _serve(CLEAN):
-        cfg = base_config(url, browsers=["chromium", "firefox"], artifacts={"video": "off"},
+        cfg = base_config(url, browsers=["chromium", "firefox"], browser_rotation="off", artifacts={"video": "off"},
                           audit={"max_pages": 5, "check_external_links": False, "security_checks": "on"},
                           compliance={"enabled": True}, accessibility={"fail_on": "none"})
         run = invoke_cli(tmp_path, ["site_audit"], config=cfg)
