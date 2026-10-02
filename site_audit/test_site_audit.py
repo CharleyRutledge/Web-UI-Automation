@@ -129,13 +129,22 @@ def test_no_broken_images(audit: SiteMap, request: pytest.FixtureRequest) -> Non
     report(problems, "broken image(s)")
 
 
-def test_pages_work_on_a_phone(audit: SiteMap, request: pytest.FixtureRequest) -> None:
-    """WCAG 1.4.10 (reflow): at 320-375 px wide nothing should need sideways scrolling."""
-    wide = [r for r in loaded(audit) if r.phone_overflow]
-    problems = [f"{short(r.url, audit.home)}: page is {r.phone_overflow['width']}px wide on a 375px phone "
-                f"(widest element: {r.phone_overflow['name']})" for r in wide]
-    show(request, audit, [r.url for r in wide])
-    report(problems, "page(s) that scroll sideways on a phone")
+def test_pages_fit_every_screen_size(audit: SiteMap, settings, request: pytest.FixtureRequest) -> None:
+    """WCAG 1.4.10 (reflow) and responsive layout: at every size in audit.screens (320 px phone to desktop)
+    nothing may need sideways scrolling. A screenshot is kept at each size where a page does not fit."""
+    sizes = ", ".join(f"{s.name} {s.width}px" for s in settings.audit.screens)
+    print(f"Checked at: {sizes}")
+    problems = []
+    for r in loaded(audit):
+        if not r.overflow:
+            continue
+        sizes = "; ".join(f"on {w['screen']} it is {w['width']}px wide (widest element: {w['name']})"
+                          for w in r.overflow.values())
+        problems.append(f"{short(r.url, audit.home)}: {sizes}")
+        for wide in r.overflow.values():
+            if wide.get("shot"):
+                request.node.step_screenshots.append((f"{short(r.url, audit.home)} on {wide['screen']}", wide["shot"]))
+    report(problems, "page(s) that need sideways scrolling")
 
 
 def test_pages_load_quickly(audit: SiteMap, settings, request: pytest.FixtureRequest) -> None:

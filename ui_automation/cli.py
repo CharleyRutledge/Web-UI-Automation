@@ -271,6 +271,16 @@ def main(argv: list[str] | None = None) -> int:
             print(problem, file=sys.stderr)
             return 2
 
+    # Every browser the run uses (settings: browsers, or --browser after --) is installed first.
+    from ui_automation.browsers import ensure_browsers
+
+    wanted = [a.split("=", 1)[1] for a in pytest_args if a.startswith("--browser=")]
+    wanted += [pytest_args[i + 1] for i, a in enumerate(pytest_args[:-1]) if a == "--browser"]
+    problem = ensure_browsers(wanted or list(settings.browsers or (settings.browser,)))
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
+
     reports_dir = reports_root(root)
     try:
         run_dir = new_run_dir(reports_dir)

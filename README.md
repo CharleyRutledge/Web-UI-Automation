@@ -59,7 +59,8 @@ home page first, up to `audit.max_pages`. Every page found is then checked for:
 - network errors: every request the page makes (scripts, styles, images, fonts, API calls) that fails or
   gets HTTP 400 or above
 - broken links (internal, plus up to 60 external) and broken images
-- sideways scrolling on a 375 px phone (WCAG 1.4.10)
+- sideways scrolling at every screen size in `audit.screens` (by default a 320 px small phone for WCAG
+  1.4.10, a phone, a tablet, a laptop and a desktop), with a screenshot at each size that breaks
 - load time against `audit.load_budget_ms`
 - HTTPS and security headers
 - a WCAG scan, with a copyable fix for each issue
@@ -72,6 +73,11 @@ as a page with no heading.
 
 Each page is opened once and all of this is measured on that visit, so a 25-page audit stays quick.
 Each check lists every problem it finds, not just the first.
+
+**Several browsers.** `browsers: [chromium, firefox, webkit]` checks every page in Chrome's engine,
+Firefox and WebKit (the engine Safari uses); a missing browser is installed automatically before the run.
+Checks that do not depend on the browser (links, HTTPS, legal pages) run once. The report's buttons
+filter by browser and role.
 
 **Nothing is skipped.** A check that does not apply to the run (HTTPS on a local app, a site-wide check
 again for each role, permission checks for a role with no restricted pages listed) is not run at all, and

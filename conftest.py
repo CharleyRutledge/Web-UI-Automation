@@ -49,7 +49,7 @@ def pytest_configure(config: pytest.Config) -> None:
         return
 
     if not config.getoption("--browser"):
-        config.option.browser = [settings.browser]
+        config.option.browser = list(settings.browsers or (settings.browser,))
 
     if not _argv_has("--video"):
         config.option.video = settings.video_mode

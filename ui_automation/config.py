@@ -74,6 +74,23 @@ class ComplianceSettings:
 
 
 @dataclass(frozen=True)
+class Screen:
+    """A screen size every audited page is checked at (nothing may need sideways scrolling)."""
+    name: str
+    width: int
+    height: int
+
+
+DEFAULT_SCREENS = (
+    Screen("small phone", 320, 640),  # WCAG 1.4.10 reflow: 320 CSS px
+    Screen("phone", 375, 812),
+    Screen("tablet", 768, 1024),
+    Screen("laptop", 1366, 768),
+    Screen("desktop", 1920, 1080),
+)
+
+
+@dataclass(frozen=True)
 class AuditSettings:
     """Whole-site audit (site_audit/): pages are discovered by following the site's own links."""
     max_pages: int = 15  # pages visited, home first, breadth-first
@@ -84,6 +101,7 @@ class AuditSettings:
     security_checks: str = "auto"
     # Pages built in the browser (React, Vue, ...) are measured only once they show content: up to this long.
     content_wait_ms: int = 15000
+    screens: tuple[Screen, ...] = DEFAULT_SCREENS
 
 
 @dataclass(frozen=True)
@@ -148,6 +166,7 @@ class Settings:
     # "on" / "off" force it. Public sites are always held to real certificates under "auto".
     allow_self_signed: str = "auto"
     name: str = ""  # what the reports call this run, e.g. "statespend.ie site audit" (default: the site's host)
+    browsers: tuple[str, ...] = ()  # every browser to run in (settings: browsers); the first is `browser`
 
     @property
     def video_mode(self) -> str:
@@ -364,7 +383,22 @@ def _load_audit(raw: Mapping[str, Any] | None) -> AuditSettings:
         check_external_links=_as_bool(raw.get("check_external_links"), True, "audit.check_external_links"),
         security_checks=_auto_on_off(raw.get("security_checks"), "audit.security_checks"),
         content_wait_ms=_as_int(raw.get("content_wait_ms"), 15000, "audit.content_wait_ms", minimum=0),
+        screens=_load_screens(raw.get("screens")),
     )
+
+
+def _load_screens(raw: Any) -> tuple[Screen, ...]:
+    if raw is None:
+        return DEFAULT_SCREENS
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("settings.yaml: audit.screens must be a list like [{name: phone, width: 375, height: 812}]")
+    screens: list[Screen] = []
+    for i, item in enumerate(raw):
+        m = _as_mapping(item, f"settings.yaml: audit.screens[{i}]")
+        width = _as_int(m.get("width"), 0, f"audit.screens[{i}].width", minimum=200)
+        name = str(m.get("name") or f"{width}px").strip()
+        screens.append(Screen(name, width, _as_int(m.get("height"), 800, f"audit.screens[{i}].height", minimum=200)))
+    return tuple(screens)
 
 
 def _auto_on_off(raw: Any, name: str) -> str:
@@ -461,9 +495,19 @@ def load_settings(path: str | Path | None = None) -> Settings:
     if not re.match(r"^https?://[^/\s]+", base_url, re.IGNORECASE):
         raise ValueError(f"settings.yaml: base_url must start with http:// or https://, got {base_url!r}")
 
-    browser = str(m.get("browser", "chromium")).lower()
-    if browser not in _VALID_BROWSERS:
-        raise ValueError(f"settings.yaml: browser must be one of {_VALID_BROWSERS}")
+    browsers_raw = m.get("browsers")
+    if browsers_raw is not None:
+        if isinstance(browsers_raw, str):
+            browsers_raw = [b.strip() for b in browsers_raw.split(",")]
+        if not isinstance(browsers_raw, list) or not browsers_raw:
+            raise ValueError("settings.yaml: browsers must be a list like [chromium, firefox, webkit]")
+        browsers = tuple(dict.fromkeys(str(b).strip().lower() for b in browsers_raw))
+    else:
+        browsers = (str(m.get("browser", "chromium")).lower(),)
+    for name in browsers:
+        if name not in _VALID_BROWSERS:
+            raise ValueError(f"settings.yaml: browser {name!r} must be one of {sorted(_VALID_BROWSERS)}")
+    browser = browsers[0]
 
     vp = _section(m, "viewport")
     notif_raw = _section(m, "notifications")
@@ -471,6 +515,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
     return Settings(
         base_url=base_url,
         browser=browser,
+        browsers=browsers,
         headless=_as_bool(m.get("headless"), True, "headless"),
         timeout_ms=_as_int(m.get("timeout_ms"), 30_000, "timeout_ms", minimum=1),
         slow_mo_ms=_as_int(m.get("slow_mo_ms"), 0, "slow_mo_ms"),
