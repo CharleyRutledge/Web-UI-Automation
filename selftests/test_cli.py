@@ -237,3 +237,11 @@ def test_url_option_tests_that_site_and_names_the_report_after_it(run_cli, site)
 def test_url_option_rejects_non_web_addresses(run_cli, url: str) -> None:
     r = run_cli(["scenarios/test_quick.py"], cli_args=["--url", url])
     assert r.returncode == 2 and "must start with http:// or https://" in r.output and r.run_dir is None
+
+
+def test_all_browsers_option_is_accepted(tmp_path: Path, site) -> None:
+    run = invoke_cli(tmp_path, ["scenarios/test_browser_scenarios.py", "-k", "test_passes"],
+                     config=base_config(site.url, browsers=["chromium"], browser_rotation="daily"),
+                     cli_args=["--all-browsers"])
+    assert run.returncode == 0, run.output
+    assert "Browser for today" not in run.output  # one browser only: nothing takes turns

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from datetime import date, datetime
 from pathlib import Path
 
 
@@ -41,3 +43,22 @@ def ensure_browsers(names: list[str]) -> str:
         return (f"Could not install {', '.join(missing)}. Run: python -m playwright install {' '.join(missing)}"
                 + (" (on Linux add --with-deps)" if sys.platform.startswith("linux") else ""))
     return ""
+
+
+def irish_today() -> date:
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo("Europe/Dublin")).date()
+    except Exception:  # noqa: BLE001 - no time zone data (some Windows installs): the computer's date
+        return date.today()
+
+
+def browsers_for_run(browsers: tuple[str, ...] | list[str], rotation: str, today: date | None = None) -> list[str]:
+    """The browsers this run uses. With browser_rotation: daily, one of them, taking turns by the day,
+    unless WEB_UI_ALL_BROWSERS=1 (the --all-browsers option) asks for all of them."""
+    names = list(browsers)
+    if rotation != "daily" or len(names) < 2 or os.environ.get("WEB_UI_ALL_BROWSERS") == "1":
+        return names
+    day = today or irish_today()
+    return [names[day.toordinal() % len(names)]]

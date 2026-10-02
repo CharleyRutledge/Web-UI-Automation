@@ -269,3 +269,30 @@ def test_audit_screens(tmp_path: Path) -> None:
         load(tmp_path, BASE + "audit:\n  screens: phone\n")
     with pytest.raises(ValueError, match=r"audit.screens\[0\].width"):
         load(tmp_path, BASE + "audit:\n  screens:\n    - {name: tiny, width: 50}\n")
+
+
+def test_browser_rotation_setting(tmp_path: Path) -> None:
+    assert load(tmp_path, BASE).browser_rotation == "daily"  # by default the browsers take turns by day
+    assert load(tmp_path, BASE).browsers == ("chromium", "firefox", "webkit")  # every engine, for any app
+    assert load(tmp_path, BASE + "browser_rotation: daily\n").browser_rotation == "daily"
+    assert load(tmp_path, BASE + "browser_rotation: off\n").browser_rotation == "off"  # YAML reads off as False
+    with pytest.raises(ValueError, match="browser_rotation must be 'daily' or 'off'"):
+        load(tmp_path, BASE + "browser_rotation: weekly\n")
+
+
+def test_browsers_take_turns_by_day(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import date, timedelta
+
+    from ui_automation.browsers import browsers_for_run
+
+    monkeypatch.delenv("WEB_UI_ALL_BROWSERS", raising=False)
+    names = ("chromium", "firefox", "webkit")
+    monday = date(2026, 10, 5)
+    week = [browsers_for_run(names, "daily", monday + timedelta(days=i)) for i in range(6)]
+    assert all(len(day) == 1 for day in week)
+    assert sorted(d[0] for d in week[:3]) == sorted(names)  # each browser once every three days
+    assert week[:3] == week[3:]  # then the same order again
+    assert browsers_for_run(names, "off", monday) == list(names)  # no rotation: all of them
+    assert browsers_for_run(("webkit",), "daily", monday) == ["webkit"]
+    monkeypatch.setenv("WEB_UI_ALL_BROWSERS", "1")  # --all-browsers
+    assert browsers_for_run(names, "daily", monday) == list(names)

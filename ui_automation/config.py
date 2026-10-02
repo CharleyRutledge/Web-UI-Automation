@@ -11,6 +11,7 @@ import yaml
 from ui_automation.env import resolve_env
 
 _VALID_BROWSERS = frozenset({"chromium", "firefox", "webkit"})
+DEFAULT_BROWSERS = ("chromium", "firefox", "webkit")
 _VALID_VIDEO = frozenset({"on", "off", "retain-on-failure"})
 _VALID_TRACING = frozenset({"on", "off", "retain-on-failure"})
 _VALID_WAIT_UNTIL = frozenset({"commit", "domcontentloaded", "load", "networkidle"})
@@ -167,6 +168,8 @@ class Settings:
     allow_self_signed: str = "auto"
     name: str = ""  # what the reports call this run, e.g. "statespend.ie site audit" (default: the site's host)
     browsers: tuple[str, ...] = ()  # every browser to run in (settings: browsers); the first is `browser`
+    # "daily": each run uses one of `browsers`, taking turns by the day (Irish date); "off": all of them every run
+    browser_rotation: str = "daily"
 
     @property
     def video_mode(self) -> str:
@@ -401,6 +404,17 @@ def _load_screens(raw: Any) -> tuple[Screen, ...]:
     return tuple(screens)
 
 
+def _rotation(raw: Any) -> str:
+    if raw is None:
+        return "daily"  # several browsers take turns by day, so every run stays quick
+    if raw is False:
+        return "off"
+    mode = str(raw).strip().lower()
+    if mode not in ("off", "daily"):
+        raise ValueError(f"settings.yaml: browser_rotation must be 'daily' or 'off', got {raw!r}")
+    return mode
+
+
 def _auto_on_off(raw: Any, name: str) -> str:
     if raw is None:
         return "auto"
@@ -502,8 +516,10 @@ def load_settings(path: str | Path | None = None) -> Settings:
         if not isinstance(browsers_raw, list) or not browsers_raw:
             raise ValueError("settings.yaml: browsers must be a list like [chromium, firefox, webkit]")
         browsers = tuple(dict.fromkeys(str(b).strip().lower() for b in browsers_raw))
+    elif m.get("browser") is not None:
+        browsers = (str(m.get("browser")).lower(),)  # one browser named: only that one
     else:
-        browsers = (str(m.get("browser", "chromium")).lower(),)
+        browsers = DEFAULT_BROWSERS  # nothing named: every engine (Chrome, Firefox, Safari's WebKit)
     for name in browsers:
         if name not in _VALID_BROWSERS:
             raise ValueError(f"settings.yaml: browser {name!r} must be one of {sorted(_VALID_BROWSERS)}")
@@ -516,6 +532,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         base_url=base_url,
         browser=browser,
         browsers=browsers,
+        browser_rotation=_rotation(m.get("browser_rotation")),
         headless=_as_bool(m.get("headless"), True, "headless"),
         timeout_ms=_as_int(m.get("timeout_ms"), 30_000, "timeout_ms", minimum=1),
         slow_mo_ms=_as_int(m.get("slow_mo_ms"), 0, "slow_mo_ms"),

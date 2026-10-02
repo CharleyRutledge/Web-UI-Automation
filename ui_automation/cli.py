@@ -158,6 +158,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Open the HTML report in the default browser after the run.",
     )
     parser.add_argument(
+        "--all-browsers",
+        action="store_true",
+        help="Run in every browser in the settings this time, even when they normally take turns by day.",
+    )
+    parser.add_argument(
         "--ui",
         action="store_true",
         help="Launch the local dashboard (browse past runs, trigger new ones) instead of running tests.",
@@ -274,9 +279,19 @@ def main(argv: list[str] | None = None) -> int:
     # Every browser the run uses (settings: browsers, or --browser after --) is installed first.
     from ui_automation.browsers import ensure_browsers
 
+    from ui_automation.browsers import browsers_for_run
+
+    if args.all_browsers:
+        os.environ["WEB_UI_ALL_BROWSERS"] = "1"  # read again by the test run (conftest.py)
     wanted = [a.split("=", 1)[1] for a in pytest_args if a.startswith("--browser=")]
     wanted += [pytest_args[i + 1] for i, a in enumerate(pytest_args[:-1]) if a == "--browser"]
-    problem = ensure_browsers(wanted or list(settings.browsers or (settings.browser,)))
+    if not wanted:
+        all_names = list(settings.browsers or (settings.browser,))
+        wanted = browsers_for_run(all_names, settings.browser_rotation)
+        if len(wanted) < len(all_names):
+            print(f"Browser for today: {wanted[0]} (they take turns by day: {' -> '.join(all_names)}; "
+                  "--all-browsers runs every one).")
+    problem = ensure_browsers(wanted)
     if problem:
         print(problem, file=sys.stderr)
         return 2

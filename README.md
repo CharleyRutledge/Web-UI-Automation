@@ -74,10 +74,13 @@ as a page with no heading.
 Each page is opened once and all of this is measured on that visit, so a 25-page audit stays quick.
 Each check lists every problem it finds, not just the first.
 
-**Several browsers.** `browsers: [chromium, firefox, webkit]` checks every page in Chrome's engine,
-Firefox and WebKit (the engine Safari uses); a missing browser is installed automatically before the run.
+**Several browsers, for any app.** By default every page is checked in Chrome's engine, Firefox and WebKit
+(the engine Safari uses), set with `browsers: [chromium, firefox, webkit]` (or `browser: chromium` for
+one only); a missing browser is installed automatically before the run.
 Checks that do not depend on the browser (links, HTTPS, legal pages) run once. The report's buttons
-filter by browser and role.
+filter by browser and role. Each run uses one of them, taking turns by day (`browser_rotation: daily`,
+the default), so runs stay quick; `--all-browsers` runs every one (e.g. before a release), and
+`browser_rotation: off` always runs all of them.
 
 **Nothing is skipped.** A check that does not apply to the run (HTTPS on a local app, a site-wide check
 again for each role, permission checks for a role with no restricted pages listed) is not run at all, and

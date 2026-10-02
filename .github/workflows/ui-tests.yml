@@ -34,7 +34,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m playwright install --with-deps chromium
+          python -m playwright install --with-deps chromium firefox webkit
           # ffmpeg turns Playwright's WebM recordings into MP4 so videos also play on iPhone/Safari.
           sudo apt-get install -y --no-install-recommends ffmpeg
 

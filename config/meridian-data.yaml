@@ -4,11 +4,12 @@
 # it is tested as it is and left running). --no-start never starts it.
 # A different port? Change base_url, or add --url http://localhost:8080 for one run.
 base_url: "http://localhost:8082"  # the Meridian Data front end (the API is on :3000, the database on :5433)
-# Every page is checked in each of these (Chrome's engine, Firefox, and WebKit, which Safari uses).
-# Missing browsers are installed automatically before the first run.
+# Every page is checked in Chrome's engine, Firefox and WebKit (the engine Safari uses), one per run, taking
+# turns by day (Irish date) so each run stays quick. --all-browsers runs all three at once (e.g. before a
+# release). Missing browsers are installed automatically.
 browsers: [chromium, firefox, webkit]
+browser_rotation: daily
 name: "Meridian Data (local)"
-browser: chromium
 headless: true
 timeout_ms: 30000
 
