@@ -246,3 +246,53 @@ def test_accepts_self_signed(tmp_path: Path, mode: str, url: str, accepted: bool
 
     s = load(tmp_path, f"base_url: {url}\nallow_self_signed: {mode}\n")
     assert accepts_self_signed(s) is accepted
+
+
+def test_browsers_list(tmp_path: Path) -> None:
+    s = load(tmp_path, BASE + "browsers: [chromium, Firefox, webkit, chromium]\n")
+    assert s.browsers == ("chromium", "firefox", "webkit") and s.browser == "chromium"
+    assert load(tmp_path, BASE + "browsers: firefox, webkit\n").browsers == ("firefox", "webkit")
+    assert load(tmp_path, BASE + "browser: webkit\n").browsers == ("webkit",)  # the single-browser setting still works
+    with pytest.raises(ValueError, match="'edge' must be one of"):
+        load(tmp_path, BASE + "browsers: [chromium, edge]\n")
+    with pytest.raises(ValueError, match="browsers must be a list"):
+        load(tmp_path, BASE + "browsers: []\n")
+
+
+def test_audit_screens(tmp_path: Path) -> None:
+    default = load(tmp_path, BASE).audit.screens
+    assert [(x.name, x.width) for x in default] == [("small phone", 320), ("phone", 375), ("tablet", 768),
+                                                     ("laptop", 1366), ("desktop", 1920)]
+    s = load(tmp_path, BASE + "audit:\n  screens:\n    - {name: watch, width: 280, height: 300}\n    - {width: 1024}\n")
+    assert [(x.name, x.width, x.height) for x in s.audit.screens] == [("watch", 280, 300), ("1024px", 1024, 800)]
+    with pytest.raises(ValueError, match="audit.screens must be a list"):
+        load(tmp_path, BASE + "audit:\n  screens: phone\n")
+    with pytest.raises(ValueError, match=r"audit.screens\[0\].width"):
+        load(tmp_path, BASE + "audit:\n  screens:\n    - {name: tiny, width: 50}\n")
+
+
+def test_browser_rotation_setting(tmp_path: Path) -> None:
+    assert load(tmp_path, BASE).browser_rotation == "daily"  # by default the browsers take turns by day
+    assert load(tmp_path, BASE).browsers == ("chromium", "firefox", "webkit")  # every engine, for any app
+    assert load(tmp_path, BASE + "browser_rotation: daily\n").browser_rotation == "daily"
+    assert load(tmp_path, BASE + "browser_rotation: off\n").browser_rotation == "off"  # YAML reads off as False
+    with pytest.raises(ValueError, match="browser_rotation must be 'daily' or 'off'"):
+        load(tmp_path, BASE + "browser_rotation: weekly\n")
+
+
+def test_browsers_take_turns_by_day(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import date, timedelta
+
+    from ui_automation.browsers import browsers_for_run
+
+    monkeypatch.delenv("WEB_UI_ALL_BROWSERS", raising=False)
+    names = ("chromium", "firefox", "webkit")
+    monday = date(2026, 10, 5)
+    week = [browsers_for_run(names, "daily", monday + timedelta(days=i)) for i in range(6)]
+    assert all(len(day) == 1 for day in week)
+    assert sorted(d[0] for d in week[:3]) == sorted(names)  # each browser once every three days
+    assert week[:3] == week[3:]  # then the same order again
+    assert browsers_for_run(names, "off", monday) == list(names)  # no rotation: all of them
+    assert browsers_for_run(("webkit",), "daily", monday) == ["webkit"]
+    monkeypatch.setenv("WEB_UI_ALL_BROWSERS", "1")  # --all-browsers
+    assert browsers_for_run(names, "daily", monday) == list(names)

@@ -1,6 +1,10 @@
 base_url: "https://your-app.example.com"
 name: "My site"  # shown on every report and Telegram message (default: the site's address)
-browser: chromium
+# Every page is checked in Chrome's engine, Firefox and WebKit (the engine Safari uses), one per run, taking
+# turns by day (Irish date) so each run stays quick. --all-browsers runs all three at once (e.g. before a
+# release). Missing browsers are installed automatically.
+browsers: [chromium, firefox, webkit]
+browser_rotation: daily
 headless: true
 timeout_ms: 30000
 slow_mo_ms: 0

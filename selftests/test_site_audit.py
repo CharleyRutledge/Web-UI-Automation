@@ -101,7 +101,9 @@ def test_crawl_follows_links_once_and_skips_files(flawed: CliRun) -> None:
         ("test_no_broken_images", ["/about: http://127.0.0.1:"]),
         ("test_no_network_errors", ["2 failed network request(s)", "/about: GET /missing.png -> HTTP 404",
                                     "/data: GET /api/data -> HTTP 404"]),
-        ("test_pages_work_on_a_phone", ["/wide: page is 1208px wide on a 375px phone (widest element: div.table-wrap)"]),
+        ("test_pages_fit_every_screen_size", ["1 page(s) that need sideways scrolling",
+                                              "/wide: on small phone (320px) it is 1208px wide (widest element: "
+                                              "div.table-wrap); on phone (375px)", "; on tablet (768px)"]),
         ("test_served_securely", ["the site is not served over HTTPS"]),
         ("test_meets_website_requirements", ["Privacy notice: No link to a privacy notice", "(GDPR Art. 13/14",
                                              "Accessibility statement: No link to an accessibility statement"]),
@@ -118,6 +120,13 @@ def test_each_planted_problem_is_found(flawed: CliRun, test: str, expected: list
 def test_network_errors_never_show_query_strings(flawed: CliRun) -> None:
     t = flawed.test("test_no_network_errors")
     assert "s3cret" not in t["message"] + t["details"]  # query strings can carry tokens
+
+
+def test_each_screen_size_that_breaks_has_a_screenshot(flawed: CliRun) -> None:
+    t = flawed.test("test_pages_fit_every_screen_size")
+    assert t["steps"] == ["/wide on small phone (320px)", "/wide on phone (375px)", "/wide on tablet (768px)"]
+    assert all((flawed.run_dir / p).is_file() or Path(p).is_file() for p in t["screenshots"])
+    assert "/wide: on laptop" not in t["message"] + t["details"]  # 1366px: the 1200px element fits
 
 
 def test_problems_are_counted_exactly(flawed: CliRun) -> None:
@@ -202,3 +211,25 @@ def test_pages_are_measured_once_their_content_is_there(tmp_path: Path) -> None:
     assert "1 page problem(s)" in text, text
     assert "/stuck: still blank or loading after 6 s" in text
     assert "no main heading" not in t["message"]  # / and /deposits were measured once built
+
+
+def test_every_browser_audits_the_pages_and_site_wide_checks_run_once(tmp_path: Path) -> None:
+    """browsers: [chromium, firefox]: each page is measured in each browser; checks that do not depend on the
+    browser (links, HTTPS, legal pages) run once. GitHub's self-test job installs Firefox for this."""
+    from ui_automation.browsers import missing_browsers
+
+    if missing_browsers(["firefox"]):
+        pytest.skip("Firefox is not installed here (CI installs it: python -m playwright install firefox)")
+    for url in _serve(CLEAN):
+        cfg = base_config(url, browsers=["chromium", "firefox"], browser_rotation="off", artifacts={"video": "off"},
+                          audit={"max_pages": 5, "check_external_links": False, "security_checks": "on"},
+                          compliance={"enabled": True}, accessibility={"fail_on": "none"})
+        run = invoke_cli(tmp_path, ["site_audit"], config=cfg)
+    ids = {t["nodeid"].split("::")[1] for t in run.summary["tests"]}
+    for check in ("test_crawl_found_the_site", "test_pages_fit_every_screen_size", "test_pages_are_accessible"):
+        assert {f"{check}[public-chromium]", f"{check}[public-firefox]"} <= ids, ids
+    for check in ("test_no_broken_links", "test_served_securely", "test_meets_website_requirements"):
+        assert [i for i in ids if i.startswith(check)] == [f"{check}[public-chromium]"], ids
+    chromium, firefox = (run.test(f"test_pages_are_accessible[public-{b}]") for b in ("chromium", "firefox"))
+    assert firefox["outcome"] == "passed", firefox
+    assert len(firefox["accessibility"]) == len(chromium["accessibility"]) >= 4  # the same pages, in each browser

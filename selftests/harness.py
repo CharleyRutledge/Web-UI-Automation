@@ -44,6 +44,7 @@ class CliRun:
 def base_config(site_url: str, **overrides: Any) -> dict[str, Any]:
     cfg: dict[str, Any] = {
         "base_url": site_url,
+        "browsers": ["chromium"],  # the self-tests run in Chromium (one multi-browser test sets its own)
         "timeout_ms": 3000,
         "artifacts": {"video": "on", "tracing": "retain-on-failure"},
         "ai": {"enabled": False},

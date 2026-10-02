@@ -2,7 +2,11 @@
 #   python -m ui_automation --config config/statespend.yaml -- site_audit
 base_url: "https://statespend.ie"
 name: "statespend.ie site audit"
-browser: chromium
+# Every page is checked in Chrome's engine, Firefox and WebKit (the engine Safari uses), one per run, taking
+# turns by day (Irish date) so each run stays quick. --all-browsers runs all three at once (e.g. before a
+# release). Missing browsers are installed automatically.
+browsers: [chromium, firefox, webkit]
+browser_rotation: daily
 headless: true
 timeout_ms: 30000
 

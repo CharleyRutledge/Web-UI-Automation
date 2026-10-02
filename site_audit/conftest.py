@@ -71,8 +71,6 @@ OVERFLOW_JS = """() => {
 TIMING_JS = """() => { const n = performance.getEntriesByType('navigation')[0];
     return n ? Math.round(n.domContentLoadedEventEnd) : null; }"""
 
-PHONE = {"width": 375, "height": 812}
-
 # Never followed while crawling: they would log the role out or change data. (Only links are followed,
 # never forms, but some apps act on a plain link.)
 SKIP_LINKS = re.compile(r"(log-?out|log-?off|sign-?out|delete|remove|destroy|unsubscribe|deactivate)", re.I)
@@ -91,7 +89,9 @@ class PageResult:
     network_errors: list[str] = field(default_factory=list)  # requests that failed or got an error status
     blank_ms: int = 0  # set when the page still showed no content after waiting this long
     broken_images: list[str] = field(default_factory=list)
-    phone_overflow: dict | None = None  # {"width": px, "name": widest element} when it scrolls sideways
+    # screen name -> {"screen": "tablet (768px)", "width": px, "name": widest element, "shot": path}, for every
+    # screen size (audit.screens) at which the page needs sideways scrolling
+    overflow: dict = field(default_factory=dict)
     ready_ms: int | None = None
     accessibility: list = field(default_factory=list)  # axe Violation objects
     screenshot: str = ""
@@ -153,9 +153,20 @@ def _measure(page: Page, result: PageResult, settings: Settings, shots: Path | N
     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")  # load lazy images
     page.wait_for_timeout(500)
     result.broken_images = page.evaluate(BROKEN_IMAGES_JS)
-    page.set_viewport_size(PHONE)
-    page.wait_for_timeout(250)  # re-layout at phone width
-    result.phone_overflow = page.evaluate(OVERFLOW_JS)
+    for screen in settings.audit.screens:  # every screen size: nothing may need sideways scrolling
+        page.set_viewport_size({"width": screen.width, "height": screen.height})
+        page.wait_for_timeout(250)  # re-layout at this size
+        wide = page.evaluate(OVERFLOW_JS)
+        if wide:
+            wide["screen"] = f"{screen.name} ({screen.width}px)"
+            if shots is not None:
+                shot = shots / f"{index:03d}_{re.sub(r'[^A-Za-z0-9]+', '_', screen.name)}_{screen.width}.png"
+                try:
+                    page.screenshot(path=str(shot))
+                    wide["shot"] = str(shot)
+                except PlaywrightError:
+                    pass
+            result.overflow[screen.name] = wide
     page.set_viewport_size({"width": settings.viewport_width, "height": settings.viewport_height})
     result.js_errors = list(js_errors)  # errors thrown while loading and during the checks
 
@@ -273,10 +284,18 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         metafunc.parametrize("role", roles, ids=roles, scope="session")
 
 
-def _not_applicable(name: str, role: str, settings: Settings) -> str:
+# Checks that do not depend on the browser (HTTP status of links, HTTPS headers, the site's legal pages) run in
+# the first browser only; everything measured on the page itself runs in every browser.
+_ONCE_PER_SITE = ("test_no_broken_links", "test_served_securely", "test_meets_website_requirements")
+
+
+def _not_applicable(name: str, role: str, settings: Settings, browser: str = "") -> str:
     """Why a test does not apply to this run ('' = it does). Such tests are not run at all, rather than skipped."""
     from ui_automation.local import is_local
 
+    browsers = settings.browsers or (settings.browser,)
+    if name in _ONCE_PER_SITE and browser and browser != browsers[0]:
+        return ""  # silently: checked once, in the first browser
     if name in ("test_served_securely", "test_meets_website_requirements") and not first_role(settings, role):
         return ""  # silently: the site-wide checks run once, for the first role
     if name == "test_served_securely":
@@ -309,9 +328,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     dropped: list[pytest.Item] = []
     reasons: list[str] = []
     for item in items:
-        role = getattr(item, "callspec", None) and item.callspec.params.get("role")
+        params = item.callspec.params if hasattr(item, "callspec") else {}
+        role = params.get("role")
         name = getattr(item, "originalname", item.name)
-        why = _not_applicable(name, role or "public", settings) if role else "-"
+        why = _not_applicable(name, role or "public", settings, params.get("browser_name", "")) if role else "-"
         if why == "-":
             keep.append(item)
         else:
@@ -332,7 +352,7 @@ def pytest_terminal_summary(terminalreporter, config: pytest.Config) -> None:  #
             terminalreporter.write_line(f"- {why}")
 
 
-_MAPS: dict[str, SiteMap] = {}
+_MAPS: dict[tuple[str, str], SiteMap] = {}  # (browser, role) -> its audited site
 
 
 def _audit_role(browser: Browser, settings: Settings, run_dir: Path, role: str) -> SiteMap:
@@ -341,7 +361,7 @@ def _audit_role(browser: Browser, settings: Settings, run_dir: Path, role: str) 
     from ui_automation.login import LoginError, is_refused, log_in
 
     home = settings.base_url.rstrip("/") + "/"
-    shots = run_dir / "screenshots" / f"site-audit-pages-{role}"
+    shots = run_dir / "screenshots" / f"site-audit-pages-{role}-{browser.browser_type.name}"
     shots.mkdir(parents=True, exist_ok=True)
     state, start = None, None
     spec = next((r for r in settings.auth.roles if r.name == role), None)
@@ -391,9 +411,10 @@ def _audit_role(browser: Browser, settings: Settings, run_dir: Path, role: str) 
 
 
 def _map_for(browser: Browser, settings: Settings, run_dir: Path, role: str) -> SiteMap:
-    if role not in _MAPS:
-        _MAPS[role] = _audit_role(browser, settings, run_dir, role)
-    return _MAPS[role]
+    key = (browser.browser_type.name, role)
+    if key not in _MAPS:
+        _MAPS[key] = _audit_role(browser, settings, run_dir, role)
+    return _MAPS[key]
 
 
 @pytest.fixture(scope="session")
