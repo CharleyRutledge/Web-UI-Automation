@@ -65,6 +65,11 @@ home page first, up to `audit.max_pages`. Every page found is then checked for:
 - a WCAG scan, with a copyable fix for each issue
 - Irish/EU website requirements on the home page
 
+Pages built in the browser (React, Vue, ...) are measured only once they show real content: the audit waits
+until the page has visible text with no "Loading..." or spinner, and has stopped changing (up to
+`audit.content_wait_ms`, 15 s by default). A page that never gets there is reported as still loading, not
+as a page with no heading.
+
 Each page is opened once and all of this is measured on that visit, so a 25-page audit stays quick.
 Each check lists every problem it finds, not just the first.
 

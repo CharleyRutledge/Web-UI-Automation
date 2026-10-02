@@ -29,6 +29,29 @@ FILE_EXTENSIONS = (".pdf", ".zip", ".csv", ".xls", ".xlsx", ".doc", ".docx", ".p
 LINKS_JS = """() => [...document.querySelectorAll('a[href]')]
     .map(a => a.href).filter(h => h.startsWith('http'))"""
 
+# The page shows real content: some visible text, and no loading indicator (a busy region, a progress bar or
+# spinner, or text that only says "Loading..."). A blank page or a spinner is still being built.
+CONTENT_JS = """() => {
+    const body = document.body;
+    if (!body) return false;
+    const text = (body.innerText || '').trim();
+    if (!text || /^(loading|please wait|laden|chargement|cargando)[\\s.\u2026]*$/i.test(text)) return false;
+    const busy = [...document.querySelectorAll('[aria-busy="true"], [role="progressbar"]')]
+        .some(el => el.getClientRects().length > 0);
+    return !busy;
+}"""
+
+# Then wait until the page stops changing (no DOM changes for 500 ms, at most 5 s): data that arrives
+# after the first content (lists, tables, menus) is in place before anything is measured.
+STABLE_JS = """() => new Promise(resolve => {
+    let quiet;
+    const done = () => { observer.disconnect(); clearTimeout(quiet); resolve(true); };
+    const observer = new MutationObserver(() => { clearTimeout(quiet); quiet = setTimeout(done, 500); });
+    observer.observe(document.documentElement, {childList: true, subtree: true, characterData: true});
+    quiet = setTimeout(done, 500);
+    setTimeout(done, 5000);
+})"""
+
 BROKEN_IMAGES_JS = """() => [...document.images]
     .filter(i => i.complete && i.naturalWidth === 0 && i.getAttribute('src') && i.loading !== 'lazy'
                  && getComputedStyle(i).display !== 'none')
@@ -66,6 +89,7 @@ class PageResult:
     h1_count: int = 0
     js_errors: list[str] = field(default_factory=list)
     network_errors: list[str] = field(default_factory=list)  # requests that failed or got an error status
+    blank_ms: int = 0  # set when the page still showed no content after waiting this long
     broken_images: list[str] = field(default_factory=list)
     phone_overflow: dict | None = None  # {"width": px, "name": widest element} when it scrolls sideways
     ready_ms: int | None = None
@@ -194,6 +218,12 @@ def crawl(browser: Browser, home: str, max_pages: int, wait_until: str, *, self_
                     page.wait_for_load_state("networkidle", timeout=5_000)
                 except PlaywrightError:
                     pass
+                content_wait = settings.audit.content_wait_ms if settings else 15_000
+                try:
+                    page.wait_for_function(CONTENT_JS, timeout=max(content_wait, 1))
+                    page.evaluate(STABLE_JS)
+                except PlaywrightError:
+                    result.blank_ms = content_wait  # still blank or loading: measured as it is, and said so
             except PlaywrightError as exc:
                 site.problems[url] = exc.message.splitlines()[0]
                 result.load_error = site.problems[url]
