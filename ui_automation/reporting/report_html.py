@@ -41,6 +41,13 @@ main { max-width:720px; margin:0 auto; padding:16px; }
 .tile b { display:block; font-size:22px; }
 .tile span { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
 .tile.pass b { color:var(--pass); } .tile.fail b { color:var(--fail); } .tile.skip b { color:var(--skip); }
+button.tile { font:inherit; color:inherit; width:100%; cursor:pointer; }
+button.tile[aria-pressed="true"], button.chip[aria-pressed="true"] { outline:2px solid var(--text); outline-offset:-2px; }
+.chips { display:flex; flex-wrap:wrap; gap:6px; margin:-6px 0 16px; }
+button.chip { font:inherit; font-size:13px; color:var(--text); background:var(--card); border:1px solid var(--line);
+              border-radius:999px; padding:4px 12px; min-height:32px; cursor:pointer; }
+.filter-status { color:var(--muted); font-size:13px; margin:-8px 0 12px; }
+[data-hidden] { display:none !important; }
 h2 { font-size:16px; margin:20px 0 8px; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
 .card.fail { border-left:4px solid var(--fail); }
@@ -112,6 +119,20 @@ _COPY_JS = (
     "var ok=false;try{ok=document.execCommand('copy');}catch(e){}a.remove();done(ok);}"
     "if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t).then(function(){done(true);},fallback);}"
     "else{fallback();}});});"
+    # Filters: a count tile picks an outcome, a chip picks a role / browser; pressing it again clears it.
+    "var f={outcome:'',tag:''},st=document.getElementById('filter-status');"
+    "var items=document.querySelectorAll('[data-outcome]');"
+    "function apply(){var n=0;items.forEach(function(el){"
+    "var ok=(!f.outcome||el.getAttribute('data-outcome')===f.outcome)"
+    "&&(!f.tag||(' '+el.getAttribute('data-tags')+' ').indexOf(' '+f.tag+' ')>=0);"
+    "if(ok){el.removeAttribute('data-hidden');if(el.matches('li'))n++;}else{el.setAttribute('data-hidden','');}});"
+    "document.querySelectorAll('button[data-filter]').forEach(function(b){var k=b.getAttribute('data-filter').split(':');"
+    "b.setAttribute('aria-pressed',String(f[k[0]]===k[1]));});"
+    "if(st)st.textContent=(f.outcome||f.tag)?'Showing '+n+' of '+document.querySelectorAll('li[data-outcome]').length"
+    "+' tests'+(f.outcome?' · '+f.outcome:'')+(f.tag?' · '+f.tag:'')+'. Press the same button again to show all.':'';}"
+    "document.querySelectorAll('button[data-filter]').forEach(function(b){b.hidden=false;"
+    "b.addEventListener('click',function(){var k=b.getAttribute('data-filter').split(':');"
+    "f[k[0]]=f[k[0]]===k[1]?'':k[1];apply();});});"
 )
 _COPY_JS_HASH = base64.b64encode(hashlib.sha256(_COPY_JS.encode()).digest()).decode()
 _CSP = ("default-src 'none'; img-src data:; media-src data:; style-src 'unsafe-inline'; "
@@ -188,9 +209,27 @@ class _Embedder:
         return f'<a class="btn" download="{escape(filename)}" href="{src}">{escape(label)}</a>' if src else ""
 
 
-def _tile(count: int, label: str, cls: str) -> str:
+def _tile(count: int, label: str, cls: str, outcome: str) -> str:
     # Zero is not news: keep it neutral so a green run doesn't show red numbers.
-    return f'<div class="tile {cls if count else ""}"><b>{count}</b><span>{label}</span></div>'
+    # A button: pressing it shows only the tests with that outcome (the script turns it on).
+    return (f'<button type="button" class="tile {cls if count else ""}" data-filter="outcome:{outcome}" '
+            f'aria-pressed="false"><b>{count}</b><span>{label}</span>'
+            f'<span class="sr-only"> (show only these)</span></button>')
+
+
+def _filter_attrs(test: TestResult) -> str:
+    """What the report's filters match on: the outcome and the role / browser tags."""
+    tags = " ".join(t.replace(" ", "_") for t in test.variant_tags)
+    return f' data-outcome="{escape(test.outcome)}" data-tags="{escape(tags)}"'
+
+
+def _chips(summary: RunSummary) -> str:
+    tags = list(dict.fromkeys(t for test in summary.tests for t in test.variant_tags))
+    if len(tags) < 2:
+        return ""
+    buttons = "".join(f'<button type="button" class="chip" data-filter="tag:{escape(t.replace(" ", "_"))}" '
+                      f'aria-pressed="false" hidden>{escape(t)}</button>' for t in tags)
+    return f'<div class="chips" role="group" aria-label="Show only">{buttons}</div>'
 
 
 def _variant(test: TestResult) -> str:
@@ -216,7 +255,7 @@ def _failure_card(test: TestResult, media: _Embedder) -> str:
     )
     shot_note = f'<div class="file">{caption}</div>' if shot else ""
     return (
-        f'<div class="card fail"><div class="name">{escape(test.title)}{_variant(test)}</div>'
+        f'<div class="card fail"{_filter_attrs(test)}><div class="name">{escape(test.title)}{_variant(test)}</div>'
         f'<div class="file">{escape(test.file)} · {label} after {_fmt_duration(test.duration)}</div>'
         f"{step}"
         f'<div class="msg">{escape(test.message or "No error message")}</div>'
@@ -227,7 +266,7 @@ def _failure_card(test: TestResult, media: _Embedder) -> str:
 def _media_card(test: TestResult, media: _Embedder, run_name: str) -> str:
     failed = test.outcome in ("failed", "error")
     parts = [
-        f'<div class="card{" fail" if failed else ""}"><div class="name">'
+        f'<div class="card{" fail" if failed else ""}"{_filter_attrs(test)}><div class="name">'
         f"{_dot(test.outcome)} "
         f"{escape(test.title)}{_variant(test)}</div>"
     ]
@@ -286,7 +325,8 @@ def _fix_block(fix: dict) -> str:
 
 
 def _accessibility_section(summary: RunSummary) -> str:
-    scans = [scan for t in summary.tests for scan in t.accessibility]
+    owners = [(t, scan) for t in summary.tests for scan in t.accessibility]
+    scans = [scan for _, scan in owners]
     if not scans:
         return ""
     from ui_automation.accessibility import AXE_VERSION, MANUAL_CHECKS
@@ -303,7 +343,7 @@ def _accessibility_section(summary: RunSummary) -> str:
         parts.append('<p class="file">Each problem comes with the corrected code for that element. '
                      '<span class="nojs-hint">Press and hold a code box to select it, then copy.</span></p>'
                      '<div id="copy-status" class="sr-only" role="status" aria-live="polite"></div>')
-    for scan_ in scans:
+    for owner, scan_ in owners:
         issues = scan_["violations"]
         rows = []
         for v in issues:
@@ -329,7 +369,8 @@ def _accessibility_section(summary: RunSummary) -> str:
             )
         body = f'<ul class="issues">{"".join(rows)}</ul>' if rows else '<p class="ok-text">No issues found by the automated checks.</p>'
         parts.append(
-            f'<div class="card{" fail" if issues else ""}"><div class="name">{escape(scan_.get("url", ""))}</div>{body}</div>'
+            f'<div class="card{" fail" if issues else ""}"{_filter_attrs(owner)}>'
+            f'<div class="name">{escape(scan_.get("url", ""))}{_variant(owner)}</div>{body}</div>'
         )
     manual = "".join(f"<li><b>{escape(c)}</b>: {escape(text)}</li>" for c, text in MANUAL_CHECKS)
     parts.append(
@@ -344,14 +385,15 @@ def _accessibility_section(summary: RunSummary) -> str:
 
 
 def _compliance_section(summary: RunSummary) -> str:
-    pages = [entry for t in summary.tests for entry in t.compliance]
+    owners = [(t, entry) for t in summary.tests for entry in t.compliance]
+    pages = [entry for _, entry in owners]
     if not pages:
         return ""
     failed = sum(1 for p in pages for r in p["results"] if not r["passed"])
     parts = ["<h2>Website requirements (Ireland / EU)</h2>",
              f'<p class="file">{failed} problem(s) found on {len(pages)} page(s). These checks find what is missing '
              "or misbehaving; the wording of your policies still needs a person to review.</p>"]
-    for entry in pages:
+    for owner, entry in owners:
         rows = "".join(
             f'<li class="issue"><span class="dot {"passed" if r["passed"] else "failed"}" aria-hidden="true">'
             f'{"✓" if r["passed"] else "✕"}</span><span class="sr-only">{"Passed" if r["passed"] else "Failed"}: </span>'
@@ -359,7 +401,7 @@ def _compliance_section(summary: RunSummary) -> str:
             for r in entry["results"]
         )
         bad = any(not r["passed"] for r in entry["results"])
-        parts.append(f'<div class="card{" fail" if bad else ""}"><div class="name">{escape(entry["url"])}</div>'
+        parts.append(f'<div class="card{" fail" if bad else ""}"{_filter_attrs(owner)}><div class="name">{escape(entry["url"])}</div>'
                      f'<ul class="issues checks">{rows}</ul></div>')
     return "".join(parts)
 
@@ -393,12 +435,14 @@ def render_summary_html(summary: RunSummary, ai_text: str | None = None) -> str:
     parts = [
         f'<section class="hero {status_cls}">{site_line}<h1>{title}</h1><p>{escape(line)}</p>'
         f'<div class="meta">{escape(" · ".join(meta))}</div></section>',
-        '<section class="tiles">'
-        + _tile(summary.passed, "Passed", "pass")
-        + _tile(summary.failed, "Failed", "fail")
-        + _tile(summary.errors, "Errors", "fail")
-        + _tile(summary.skipped, "Skipped", "skip")
+        '<section class="tiles" aria-label="Results: press one to show only those tests">'
+        + _tile(summary.passed, "Passed", "pass", "passed")
+        + _tile(summary.failed, "Failed", "fail", "failed")
+        + _tile(summary.errors, "Errors", "fail", "error")
+        + _tile(summary.skipped, "Skipped", "skip", "skipped")
         + "</section>",
+        _chips(summary),
+        '<p id="filter-status" class="filter-status" role="status" aria-live="polite"></p>',
     ]
 
     media = _Embedder(summary.run_dir)
@@ -427,7 +471,7 @@ def render_summary_html(summary: RunSummary, ai_text: str | None = None) -> str:
     for t in sorted(summary.tests, key=lambda t: (order.get(t.outcome, 4), t.nodeid)):
         note = f'<div class="file">{escape(t.message)}</div>' if t.outcome == "skipped" and t.message else ""
         rows.append(
-            f"<li>{_dot(t.outcome)}"
+            f"<li{_filter_attrs(t)}>{_dot(t.outcome)}"
             f'<div class="grow"><div class="name">{escape(t.title)}{_variant(t)}</div>'
             f'<div class="file">{escape(t.file)}</div>{note}</div>'
             f'<span class="dur">{_fmt_duration(t.duration)}</span></li>'
