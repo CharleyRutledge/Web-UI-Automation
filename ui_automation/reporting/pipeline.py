@@ -17,6 +17,7 @@ from ui_automation.reporting.email_notify import send_run_email
 from ui_automation.reporting.report_html import render_summary_html
 from ui_automation.reporting.summary import RunSummary, TestResult
 from ui_automation.reporting.telegram_notify import send_run_telegram
+from ui_automation.terminal import link
 
 
 _ARTIFACT_DIRS = {".webm": "videos", ".zip": "traces", ".png": "failure-screenshots"}
@@ -192,7 +193,7 @@ def finalize_run(
     if output:
         summary.video_files, summary.trace_files = collect_playwright_artifacts(Path(output), run_dir)
         if summary.video_files:
-            print(f"Saved {len(summary.video_files)} video file(s) under {run_dir / 'videos'}")
+            print(f"Saved {len(summary.video_files)} video file(s) under {link(run_dir / 'videos')}")
     _attach_media(summary, run_dir)
 
     payload = summary.to_dict()
@@ -233,7 +234,7 @@ def notify_run(run_dir: Path, settings: Settings) -> Path | None:
         ai_text = analyze_run(summary, settings.ai)
         if ai_text:
             (run_dir / "claude_summary.txt").write_text(ai_text, encoding="utf-8")
-            print(f"Claude summary: {run_dir / 'claude_summary.txt'}")
+            print(f"Claude summary: {link(run_dir / 'claude_summary.txt')}")
     except Exception as exc:
         print(f"Claude analysis skipped: {exc}")
 
@@ -244,7 +245,7 @@ def notify_run(run_dir: Path, settings: Settings) -> Path | None:
         print(f"Summary report failed ({type(exc).__name__}: {exc}); sending a plain fallback report")
         html = _fallback_report(summary, exc)
     report_path.write_text(html, encoding="utf-8")
-    print(f"Summary report: {report_path}")
+    print(f"Summary report: {link(report_path)}")
 
     try:
         send_run_email(summary, settings.notifications.email, ai_summary=ai_text, attachment=report_path)

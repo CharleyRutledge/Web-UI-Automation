@@ -124,7 +124,8 @@ def test_self_signed_https_on_a_local_app_works(tmp_path: Path, tls_site) -> Non
                      config=base_config(tls_site.url, artifacts={"video": "off"}, audit={"max_pages": 2}))
     outcomes = {t["nodeid"].split("::")[1].split("[")[0]: t["outcome"] for t in run.summary["tests"]}
     assert outcomes["test_crawl_found_the_site"] == "passed", run.output
-    assert outcomes["test_served_securely"] == "skipped"  # local: HTTPS and headers are for the deployed site
+    # local: HTTPS and headers are for the deployed site, so that check is not run (and the run says why)
+    assert "test_served_securely" not in outcomes and "Served securely: a local app has no HTTPS" in run.output
 
 
 def test_self_signed_allowance_can_be_switched_off(tmp_path: Path, tls_site) -> None:

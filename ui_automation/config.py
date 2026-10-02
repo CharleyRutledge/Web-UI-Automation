@@ -101,6 +101,8 @@ class RoleSettings:
     password: str = ""
     start: str = ""  # page to start from after logging in (default: where the login lands)
     must_not_access: tuple[str, ...] = ()  # pages this role must be refused (permission checks)
+    area: str = ""  # only crawl pages under this path, like /app (default: the whole site)
+    pages: tuple[str, ...] = ()  # extra pages to check that the crawler cannot reach through links
 
 
 @dataclass(frozen=True)
@@ -306,12 +308,18 @@ def _load_auth(raw: Mapping[str, Any] | None) -> AuthSettings:
         if name == "public" or any(r.name == name for r in roles):
             raise ValueError(f"settings.yaml: auth.roles: the name {name!r} is used twice or reserved")
         blocked = role.get("must_not_access") or []
+        extra = role.get("pages") or []
+        area = text(role, "area", f"auth.roles.{name}")
+        if area and not area.startswith("/"):
+            area = "/" + area
         roles.append(RoleSettings(
             name=name,
             username=text(role, "username", f"auth.roles.{name}"),
             password=text(role, "password", f"auth.roles.{name}"),
             start=text(role, "start", f"auth.roles.{name}"),
             must_not_access=_pages(blocked, f"auth.roles.{name}.must_not_access") if blocked else (),
+            area=area,
+            pages=_pages(extra, f"auth.roles.{name}.pages") if extra else (),
         ))
     return AuthSettings(
         login_url=text(raw, "login_url", "auth") or "/login",
@@ -322,6 +330,11 @@ def _load_auth(raw: Mapping[str, Any] | None) -> AuthSettings:
         include_public=_as_bool(raw.get("include_public"), True, "auth.include_public"),
         roles=tuple(roles),
     )
+
+
+def role_area(role: RoleSettings) -> str:
+    """The part of the site a logged-in role's crawl is kept to ('' = everywhere): auth.roles[].area."""
+    return "" if role.area.rstrip("/") == "" else "/" + role.area.strip("/")
 
 
 def _load_app(raw: Mapping[str, Any] | None) -> AppSettings:

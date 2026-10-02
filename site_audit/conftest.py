@@ -20,7 +20,7 @@ from playwright.sync_api import Browser, Error as PlaywrightError, Page
 
 from pages.base_page import BasePage
 from ui_automation.blocking import blocked_reason
-from ui_automation.config import Settings, accepts_self_signed
+from ui_automation.config import Settings, accepts_self_signed, role_area
 
 # Links to files rather than pages: checked as links, never opened as pages.
 FILE_EXTENSIONS = (".pdf", ".zip", ".csv", ".xls", ".xlsx", ".doc", ".docx", ".ppt", ".pptx", ".json", ".xml",
@@ -60,10 +60,12 @@ class PageResult:
     """Everything measured on one page during its single visit."""
     url: str
     status: int | None = None
+    final_url: str = ""  # where the browser ended up (differs after a redirect, e.g. to the login page)
     load_error: str = ""  # set when the page could not be opened at all
     title: str = ""
     h1_count: int = 0
     js_errors: list[str] = field(default_factory=list)
+    network_errors: list[str] = field(default_factory=list)  # requests that failed or got an error status
     broken_images: list[str] = field(default_factory=list)
     phone_overflow: dict | None = None  # {"width": px, "name": widest element} when it scrolls sideways
     ready_ms: int | None = None
@@ -83,6 +85,8 @@ class SiteMap:
     state: dict | None = None  # the role's logged-in session (cookies, local storage)
     login_error: str = ""  # set when logging in as the role failed
     refused: dict[str, str] = field(default_factory=dict)  # must_not_access page -> what happened ("" = refused)
+    area: str = ""  # the part of the site this role's crawl stayed in ("" = everywhere)
+    skipped_public: int = 0  # pages left out because the logged-out visitor already checked them
 
 
 def same_site(url: str, home: str) -> bool:
@@ -134,9 +138,12 @@ def _measure(page: Page, result: PageResult, settings: Settings, shots: Path | N
 
 def crawl(browser: Browser, home: str, max_pages: int, wait_until: str, *, self_signed_ok: bool = False,
           settings: Settings | None = None, shots: Path | None = None, storage_state: dict | None = None,
-          start: str | None = None) -> SiteMap:
+          start: str | None = None, area: str = "", extra: tuple[str, ...] = (),
+          already_checked: frozenset[str] = frozenset()) -> SiteMap:
     """Follow the site's links breadth-first; with `settings`, also measure every page on the same visit.
-    `storage_state` is a logged-in session; the crawl then starts at `start` (default: the home page)."""
+    `storage_state` is a logged-in session; the crawl then starts at `start` (default: the home page).
+    `area` keeps the crawl to pages under that path (like /app); `extra` pages are checked as well.
+    `already_checked` pages (seen by the logged-out visitor) are not opened again."""
     site = SiteMap(home=home)
     viewport = {"width": settings.viewport_width, "height": settings.viewport_height} if settings else None
     context = browser.new_context(ignore_https_errors=self_signed_ok, viewport=viewport, storage_state=storage_state)
@@ -145,13 +152,41 @@ def crawl(browser: Browser, home: str, max_pages: int, wait_until: str, *, self_
         page.set_default_timeout(settings.timeout_ms)
     js_errors: list[str] = []
     page.on("pageerror", lambda err: js_errors.append(err.message.splitlines()[0][:200] if err.message else str(err)))
+    network_errors: list[str] = []
+
+    def where(url: str) -> str:  # never the query string: it can carry tokens
+        u = urlparse(url)
+        return (u.path or "/") if same_site(url, home) else f"{u.netloc}{u.path or '/'}"
+
+    def on_response(response) -> None:  # noqa: ANN001 - Playwright Response
+        # (the page itself is covered by the page and link checks)
+        if response.status >= 400 and not response.request.is_navigation_request() and len(network_errors) < 50:
+            network_errors.append(f"{response.request.method} {where(response.url)} -> HTTP {response.status}")
+
+    def on_failed(request) -> None:  # noqa: ANN001 - Playwright Request
+        failure = request.failure or "failed"
+        # ERR_ABORTED: the browser cancelled it because the crawler moved on to the next page, not a fault.
+        if "ERR_ABORTED" not in failure and not request.is_navigation_request() and len(network_errors) < 50:
+            network_errors.append(f"{request.method} {where(request.url)} -> no answer ({failure})")
+
+    page.on("response", on_response)
+    page.on("requestfailed", on_failed)
+    def in_area(url: str) -> bool:
+        path = urlparse(url).path
+        return not area or path == area or path.startswith(area.rstrip("/") + "/")
+
     first = start or home
     queue, seen = [first], {normalise(first)}
+    for url in extra:
+        if normalise(url) not in seen:
+            seen.add(normalise(url))
+            queue.append(normalise(url))
     try:
         while queue and len(site.pages) < max_pages:
             url = queue.pop(0)
             result = PageResult(url)
             js_errors.clear()
+            network_errors.clear()
             try:
                 response = page.goto(url, wait_until=wait_until)  # type: ignore[arg-type]
                 page.wait_for_load_state("load", timeout=15_000)
@@ -175,15 +210,18 @@ def crawl(browser: Browser, home: str, max_pages: int, wait_until: str, *, self_
             site.pages.append(url)
             site.results[url] = result
             result.status = response.status if response else None
+            result.final_url = page.url
             for href in page.evaluate(LINKS_JS):
                 site.links.setdefault(urldefrag(href)[0], url)
                 key = normalise(href)
-                if same_site(href, home) and is_page(href) and key not in seen and not SKIP_LINKS.search(urlparse(href).path):
+                if (same_site(href, home) and is_page(href) and key not in seen and in_area(key)
+                        and key not in already_checked and not SKIP_LINKS.search(urlparse(href).path)):
                     seen.add(key)
                     queue.append(key)
             if settings is not None:
                 try:
                     _measure(page, result, settings, shots, len(site.pages), js_errors)
+                    result.network_errors = list(dict.fromkeys(network_errors))
                 except PlaywrightError as exc:  # a page that breaks mid-check is reported, the audit goes on
                     site.problems[url] = f"could not be checked: {exc.message.splitlines()[0]}"
     finally:
@@ -205,6 +243,65 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         metafunc.parametrize("role", roles, ids=roles, scope="session")
 
 
+def _not_applicable(name: str, role: str, settings: Settings) -> str:
+    """Why a test does not apply to this run ('' = it does). Such tests are not run at all, rather than skipped."""
+    from ui_automation.local import is_local
+
+    if name in ("test_served_securely", "test_meets_website_requirements") and not first_role(settings, role):
+        return ""  # silently: the site-wide checks run once, for the first role
+    if name == "test_served_securely":
+        mode = settings.audit.security_checks
+        if mode == "off":
+            return "Served securely: audit.security_checks is off"
+        if mode == "auto" and is_local(settings.base_url):
+            return ("Served securely: a local app has no HTTPS; it is checked on the deployed site "
+                    "(audit.security_checks: on checks it here too)")
+    if name == "test_meets_website_requirements" and not settings.compliance.enabled:
+        return "Meets website requirements: compliance.enabled is false"
+    if name == "test_pages_are_accessible" and not settings.accessibility.enabled:
+        return "Pages are accessible: accessibility.enabled is false"
+    if name == "test_role_is_refused_restricted_pages":
+        spec = next((r for r in settings.auth.roles if r.name == role), None)
+        if spec is None:
+            return ""  # silently: the logged-out visitor has nothing to be refused
+        if not spec.must_not_access:
+            return (f"Role is refused restricted pages ({role}): no pages listed in "
+                    f"auth.roles.{role}.must_not_access, so access control is not tested for this role")
+    return "-"
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Tests that do not apply are left out (listed at the end of the run), so nothing is ever skipped."""
+    from ui_automation.config import load_settings
+
+    settings = load_settings(config.getoption("--config"))
+    keep: list[pytest.Item] = []
+    dropped: list[pytest.Item] = []
+    reasons: list[str] = []
+    for item in items:
+        role = getattr(item, "callspec", None) and item.callspec.params.get("role")
+        name = getattr(item, "originalname", item.name)
+        why = _not_applicable(name, role or "public", settings) if role else "-"
+        if why == "-":
+            keep.append(item)
+        else:
+            dropped.append(item)
+            if why and why not in reasons:
+                reasons.append(why)
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = keep
+    config._site_audit_not_run = reasons  # type: ignore[attr-defined]
+
+
+def pytest_terminal_summary(terminalreporter, config: pytest.Config) -> None:  # noqa: ANN001
+    reasons = getattr(config, "_site_audit_not_run", [])
+    if reasons:
+        terminalreporter.section("Not run (does not apply to this site or its settings)")
+        for why in reasons:
+            terminalreporter.write_line(f"- {why}")
+
+
 _MAPS: dict[str, SiteMap] = {}
 
 
@@ -224,9 +321,21 @@ def _audit_role(browser: Browser, settings: Settings, run_dir: Path, role: str) 
         except LoginError as exc:
             return SiteMap(home=home, role=role, login_error=str(exc))
         start = urljoin(home, spec.start.lstrip("/")) if spec.start else None
+    area = role_area(spec) if spec is not None else ""
+    extra = tuple(urljoin(home, p.lstrip("/")) for p in spec.pages) if spec is not None else ()
+    already_checked: frozenset[str] = frozenset()
+    if spec is not None and settings.auth.include_public:
+        # Pages the logged-out visitor opened (not redirected away from) were checked already: a role's pages
+        # go to its own part of the app instead.
+        public = _map_for(browser, settings, run_dir, "public")
+        already_checked = frozenset(
+            normalise(u) for u, r in public.results.items()
+            if r.final_url and normalise(r.final_url) == normalise(u) and not r.load_error)
     site = crawl(browser, home, settings.audit.max_pages, settings.navigation_wait_until,
                  self_signed_ok=accepts_self_signed(settings), settings=settings, shots=shots,
-                 storage_state=state, start=start)
+                 storage_state=state, start=start, area=area, extra=extra, already_checked=already_checked)
+    site.area = area
+    site.skipped_public = len(already_checked)
     site.role = role
     site.state = state
     if spec is not None and spec.must_not_access:
@@ -251,11 +360,15 @@ def _audit_role(browser: Browser, settings: Settings, run_dir: Path, role: str) 
     return site
 
 
-@pytest.fixture(scope="session")
-def site_map(browser: Browser, settings: Settings, run_dir: Path, role: str) -> SiteMap:
+def _map_for(browser: Browser, settings: Settings, run_dir: Path, role: str) -> SiteMap:
     if role not in _MAPS:
         _MAPS[role] = _audit_role(browser, settings, run_dir, role)
     return _MAPS[role]
+
+
+@pytest.fixture(scope="session")
+def site_map(browser: Browser, settings: Settings, run_dir: Path, role: str) -> SiteMap:
+    return _map_for(browser, settings, run_dir, role)
 
 
 @pytest.fixture
