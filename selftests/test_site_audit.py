@@ -33,13 +33,15 @@ FLAWED = {
 _FOOTER = ('<footer><a href="/privacy">Privacy notice</a> <a href="/accessibility">Accessibility statement</a> '
            '<a href="/contact">Contact us</a><p>Example Ltd, registered in Ireland, company number 654321. Registered '
            'office: 1 Main Street, Dublin 2. Email: <a href="mailto:hi@example.ie">hi@example.ie</a></p></footer>')
+# Links big enough to tap on a phone (WCAG 2.5.8), as a well-built site has them.
+_TAP = "<style>a{display:inline-block;min-width:24px;min-height:24px;margin:2px}</style>"
 CLEAN = {
-    "/": _page("Home", '<h1>Home</h1><a href="/about">About</a>' + _FOOTER),
+    "/": _page("Home", _TAP + '<h1>Home</h1><a href="/about">About</a>' + _FOOTER),
     "/privacy": _page("Privacy", "<h1>Privacy notice</h1>"),
     "/accessibility": _page("Accessibility", "<h1>Accessibility statement</h1>"),
     "/contact": _page("Contact", "<h1>Contact us</h1>"),
     # Built in the browser after a slow request, like a React/Vue page: the audit must wait for it.
-    "/about": _page("About", '<div id="app">Loading…</div><script>fetch("/slow").then(() => {'
+    "/about": _page("About", _TAP + '<div id="app">Loading…</div><script>fetch("/slow").then(() => {'
                              'document.getElementById("app").innerHTML = \'<h1>About</h1><a href="/">Home</a>\';})</script>'),
     "/slow": "{}",
 }
@@ -138,7 +140,8 @@ def test_problems_are_counted_exactly(flawed: CliRun) -> None:
 def test_clean_site_passes_everything_but_https(tmp_path: Path) -> None:
     for url in _serve(CLEAN):
         run = audit(tmp_path, url)
-    failed = {t["nodeid"].split("::")[1].split("[")[0]: t["message"] for t in run.summary["tests"] if t["outcome"] == "failed"}
+    failed = {t["nodeid"].split("::")[1].split("[")[0]: t["message"] + t["details"][-600:]
+              for t in run.summary["tests"] if t["outcome"] == "failed"}
     # A local test server has no HTTPS; every header is present, so that is the only finding.
     assert list(failed) == ["test_served_securely"], failed
     assert "1 security finding(s)" in failed["test_served_securely"]
@@ -233,3 +236,37 @@ def test_every_browser_audits_the_pages_and_site_wide_checks_run_once(tmp_path: 
     chromium, firefox = (run.test(f"test_pages_are_accessible[public-{b}]") for b in ("chromium", "firefox"))
     assert firefox["outcome"] == "passed", firefox
     assert len(firefox["accessibility"]) == len(chromium["accessibility"]) >= 4  # the same pages, in each browser
+
+
+PHONE_PAGES = {
+    "/": _page("Home", '<h1>Home</h1><p>Welcome.</p><a href="/desktop-only">Desktop-only page</a> '
+                       '<p>Read our <a href="/">terms</a> in this sentence, which is fine to tap.</p>'),
+    # No viewport tag, 9px text, and two 16px buttons side by side.
+    "/desktop-only": ('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Old</title></head><body>'
+                      '<main><h1>Old page</h1><p style="font-size:9px">Tiny print</p>'
+                      '<button style="width:16px;height:16px;padding:0">a</button>'
+                      '<button style="width:16px;height:16px;padding:0">b</button></main></body></html>'),
+}
+
+
+def test_mobile_devices_find_phone_problems(tmp_path: Path) -> None:
+    for url in _serve(PHONE_PAGES):
+        cfg = base_config(url, artifacts={"video": "off"}, accessibility={"fail_on": "none"},
+                          audit={"max_pages": 5, "check_external_links": False, "mobile_devices": ["Pixel 7"]})
+        run = invoke_cli(tmp_path, ["site_audit", "-k", "mobile"], config=cfg)
+    t = run.test("test_works_on_mobile_devices")
+    text = t["message"] + t["details"]
+    assert t["outcome"] == "failed", run.output
+    assert "Pixel 7 /desktop-only: not set up for phones" in text
+    assert "Pixel 7 /desktop-only: text smaller than 12px: p (9px)" in text
+    assert "Pixel 7 /desktop-only: hard to tap: 2 button(s) or link(s) smaller than 24x24px" in text  # axe target-size
+    assert "Pixel 7 /:" not in text  # the good page, with a link inside a sentence, is fine
+    assert t["steps"] == ["Pixel 7 /", "Pixel 7 /desktop-only"]  # the first page, and the page with problems
+
+
+def test_unknown_device_is_named(tmp_path: Path) -> None:
+    for url in _serve(PHONE_PAGES):
+        cfg = base_config(url, artifacts={"video": "off"}, audit={"max_pages": 1, "mobile_devices": ["Pixel 99"]})
+        run = invoke_cli(tmp_path, ["site_audit", "-k", "mobile"], config=cfg)
+    t = run.test("test_works_on_mobile_devices")
+    assert "Pixel 99: not a known device (did you mean: Pixel" in t["message"] + t["details"]

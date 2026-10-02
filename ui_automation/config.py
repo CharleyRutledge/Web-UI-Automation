@@ -103,6 +103,9 @@ class AuditSettings:
     # Pages built in the browser (React, Vue, ...) are measured only once they show content: up to this long.
     content_wait_ms: int = 15000
     screens: tuple[Screen, ...] = DEFAULT_SCREENS
+    # Real phones (Playwright's device list): their screen, touch, pixel density and mobile browser.
+    # They take turns by day like the browsers (browser_rotation); [] turns the mobile check off.
+    mobile_devices: tuple[str, ...] = ("iPhone 15", "Pixel 7")
 
 
 @dataclass(frozen=True)
@@ -387,7 +390,18 @@ def _load_audit(raw: Mapping[str, Any] | None) -> AuditSettings:
         security_checks=_auto_on_off(raw.get("security_checks"), "audit.security_checks"),
         content_wait_ms=_as_int(raw.get("content_wait_ms"), 15000, "audit.content_wait_ms", minimum=0),
         screens=_load_screens(raw.get("screens")),
+        mobile_devices=_load_devices(raw.get("mobile_devices")),
     )
+
+
+def _load_devices(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return AuditSettings.mobile_devices
+    if isinstance(raw, str):
+        raw = [d.strip() for d in raw.split(",") if d.strip()]
+    if not isinstance(raw, list) or not all(isinstance(d, str) and d.strip() for d in raw):
+        raise ValueError("settings.yaml: audit.mobile_devices must be a list like [iPhone 15, Pixel 7] (or [] for none)")
+    return tuple(dict.fromkeys(d.strip() for d in raw))
 
 
 def _load_screens(raw: Any) -> tuple[Screen, ...]:

@@ -291,7 +291,12 @@ def main(argv: list[str] | None = None) -> int:
         if len(wanted) < len(all_names):
             print(f"Browser for today: {wanted[0]} (they take turns by day: {' -> '.join(all_names)}; "
                   "--all-browsers runs every one).")
-    problem = ensure_browsers(wanted)
+    from ui_automation.browsers import device_engines
+
+    # The mobile devices' browsers are needed only when the site audit runs.
+    audit_run = any("site_audit" in a for a in pytest_args)
+    devices = browsers_for_run(list(settings.audit.mobile_devices), settings.browser_rotation) if audit_run else []
+    problem = ensure_browsers(wanted + device_engines(devices))
     if problem:
         print(problem, file=sys.stderr)
         return 2

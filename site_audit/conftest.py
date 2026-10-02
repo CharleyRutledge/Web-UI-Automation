@@ -52,6 +52,27 @@ STABLE_JS = """() => new Promise(resolve => {
     setTimeout(done, 5000);
 })"""
 
+# What a phone shows: set up for phones (viewport tag), no sideways scrolling and readable text (12px+).
+# Tap target size (WCAG 2.5.8) is axe-core's own target-size rule, run on the phone's layout.
+MOBILE_JS = """() => {
+    const meta = document.querySelector('meta[name="viewport"]');
+    const viewport = !!meta && /width\\s*=\\s*device-width/i.test(meta.content || '');
+    const w = document.documentElement.clientWidth;
+    const overflow = document.documentElement.scrollWidth > w + 1 ? document.documentElement.scrollWidth : 0;
+    const shown = el => { const r = el.getBoundingClientRect(), st = getComputedStyle(el);
+        return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; };
+    const label = el => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+        + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\\s+/)[0] : '');
+    const small = [];
+    for (const el of document.querySelectorAll('body *')) {
+        if (small.length >= 5) break;
+        const own = [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim().length > 1);
+        const size = parseFloat(getComputedStyle(el).fontSize);
+        if (own && size < 12 && shown(el)) small.push(label(el) + ' (' + size + 'px)');
+    }
+    return {viewport, overflow, small};
+}"""
+
 BROKEN_IMAGES_JS = """() => [...document.images]
     .filter(i => i.complete && i.naturalWidth === 0 && i.getAttribute('src') && i.loading !== 'lazy'
                  && getComputedStyle(i).display !== 'none')
@@ -286,16 +307,20 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 
 # Checks that do not depend on the browser (HTTP status of links, HTTPS headers, the site's legal pages) run in
 # the first browser only; everything measured on the page itself runs in every browser.
-_ONCE_PER_SITE = ("test_no_broken_links", "test_served_securely", "test_meets_website_requirements")
+# The phones use their own browsers, so the mobile check also runs once per run.
+_ONCE_PER_SITE = ("test_no_broken_links", "test_served_securely", "test_meets_website_requirements",
+                  "test_works_on_mobile_devices")
 
 
-def _not_applicable(name: str, role: str, settings: Settings, browser: str = "") -> str:
-    """Why a test does not apply to this run ('' = it does). Such tests are not run at all, rather than skipped."""
+def _not_applicable(name: str, role: str, settings: Settings, browser: str = "", first_browser: str = "") -> str:
+    """Why a test does not apply to this run ('' = it does). Such tests are not run at all, rather than skipped.
+    `first_browser` is the first browser of this run (with daily rotation: today's browser)."""
     from ui_automation.local import is_local
 
-    browsers = settings.browsers or (settings.browser,)
-    if name in _ONCE_PER_SITE and browser and browser != browsers[0]:
-        return ""  # silently: checked once, in the first browser
+    if name in _ONCE_PER_SITE and browser and first_browser and browser != first_browser:
+        return ""  # silently: checked once, in the run's first browser
+    if name == "test_works_on_mobile_devices" and not settings.audit.mobile_devices:
+        return "Works on mobile devices: audit.mobile_devices is empty"
     if name in ("test_served_securely", "test_meets_website_requirements") and not first_role(settings, role):
         return ""  # silently: the site-wide checks run once, for the first role
     if name == "test_served_securely":
@@ -324,6 +349,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     from ui_automation.config import load_settings
 
     settings = load_settings(config.getoption("--config"))
+    first_browser = (config.getoption("--browser") or [settings.browser])[0]
     keep: list[pytest.Item] = []
     dropped: list[pytest.Item] = []
     reasons: list[str] = []
@@ -331,7 +357,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         params = item.callspec.params if hasattr(item, "callspec") else {}
         role = params.get("role")
         name = getattr(item, "originalname", item.name)
-        why = _not_applicable(name, role or "public", settings, params.get("browser_name", "")) if role else "-"
+        why = (_not_applicable(name, role or "public", settings, params.get("browser_name", ""), first_browser)
+               if role else "-")
         if why == "-":
             keep.append(item)
         else:
@@ -443,6 +470,69 @@ def site(page: Page, settings: Settings, request: pytest.FixtureRequest, test_ar
     if site_map.state:  # the role's session, so link checks reach pages behind the login
         page.context.add_cookies(site_map.state.get("cookies", []))
     return BasePage(page, settings, request, test_artifacts_dir)
+
+
+def check_on_device(playwright, settings: Settings, site: SiteMap, device: str,  # noqa: ANN001
+                    shots: Path) -> tuple[list[str], list[tuple[str, str]]]:
+    """Open every page the crawl found on a real phone profile (as the same role). Returns the problems found
+    and (label, screenshot) pairs: the first page, plus every page with a problem."""
+    from ui_automation.accessibility import scan_rules
+
+    if device not in playwright.devices:
+        near = [d for d in playwright.devices if device.split()[0].lower() in d.lower()][:8]
+        return [f"{device}: not a known device{' (did you mean: ' + ', '.join(near) + '?)' if near else ''}"], []
+    profile = dict(playwright.devices[device])
+    engine = profile.pop("default_browser_type")
+    browser = getattr(playwright, engine).launch(headless=settings.headless)
+    context = browser.new_context(**profile, storage_state=site.state, ignore_https_errors=accepts_self_signed(settings))
+    page = context.new_page()
+    page.set_default_timeout(settings.timeout_ms)
+    errors: list[str] = []
+    page.on("pageerror", lambda err: errors.append(f"JavaScript error: {(err.message or str(err)).splitlines()[0][:150]}"))
+    page.on("response", lambda r: errors.append(f"{r.request.method} {urlparse(r.url).path or '/'} -> HTTP {r.status}")
+            if r.status >= 400 and not r.request.is_navigation_request() else None)
+    problems: list[str] = []
+    gallery: list[tuple[str, str]] = []
+    shots.mkdir(parents=True, exist_ok=True)
+    try:
+        for n, url in enumerate(u for u in site.pages if not site.results.get(u, PageResult(u)).load_error):
+            errors.clear()
+            where = short(url, site.home)
+            try:
+                page.goto(url, wait_until=settings.navigation_wait_until)  # type: ignore[arg-type]
+                try:
+                    page.wait_for_function(CONTENT_JS, timeout=max(settings.audit.content_wait_ms, 1))
+                    page.evaluate(STABLE_JS)
+                except PlaywrightError:
+                    pass
+                found = page.evaluate(MOBILE_JS)
+            except PlaywrightError as exc:
+                problems.append(f"{device} {where}: could not be opened ({exc.message.splitlines()[0][:120]})")
+                continue
+            here = []
+            if not found["viewport"]:
+                here.append("not set up for phones (no <meta name=viewport content=\"width=device-width\">), "
+                            "so the phone shows a shrunken desktop page")
+            if found["overflow"]:
+                here.append(f"scrolls sideways: {found['overflow']}px wide on a {page.viewport_size['width']}px screen")
+            if found["small"]:
+                here.append("text smaller than 12px: " + ", ".join(found["small"]))
+            for v in scan_rules(page, ["target-size"]):  # WCAG 2.5.8, on the phone's own layout
+                here.append(f"hard to tap: {v.count} button(s) or link(s) smaller than 24x24px and too close to "
+                            f"others (WCAG 2.5.8), e.g. {', '.join(v.targets[:3])}")
+            here += list(dict.fromkeys(errors))[:5]
+            problems += [f"{device} {where}: {p}" for p in here]
+            if here or n == 0:
+                shot = shots / f"{re.sub(r'[^A-Za-z0-9]+', '_', device)}_{n:03d}.png"
+                try:
+                    page.screenshot(path=str(shot))
+                    gallery.append((f"{device} {where}", str(shot)))
+                except PlaywrightError:
+                    pass
+    finally:
+        context.close()
+        browser.close()
+    return problems, gallery
 
 
 def first_role(settings: Settings, role: str) -> bool:

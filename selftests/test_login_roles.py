@@ -22,7 +22,10 @@ PASSWORDS = {"admin": "Adm1n-SENTINEL-pw", "viewer": "V1ewer-SENTINEL-pw"}
 
 
 def _page(title: str, body: str) -> str:
-    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{title}</title></head>'
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{title}</title>'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            # Links and buttons big enough to tap on a phone (WCAG 2.5.8): the mobile check must pass.
+            '<style>a,button{display:inline-block;min-width:24px;min-height:24px;margin:2px}</style></head>'
             f"<body><main><h1>{title}</h1>{body}</main></body></html>")
 
 
