@@ -62,6 +62,11 @@ def test_every_page_loads_with_a_title_and_heading(audit: SiteMap, request: pyte
             problems.append(f"{where}: HTTP {r.status}")
             bad.append(url)
             continue
+        if r.blank_ms:
+            problems.append(f"{where}: still blank or loading after {r.blank_ms / 1000:g} s, so its content could "
+                            "not be checked (a slow or failed API call? audit.content_wait_ms waits longer)")
+            bad.append(url)
+            continue
         if not r.title:
             problems.append(f"{where}: no page title (WCAG 2.4.2)")
             bad.append(url)

@@ -173,3 +173,32 @@ def test_shared_accessibility_issue_is_reported_once_with_its_pages(tmp_path: Pa
     assert "1 accessibility issue type(s) at or above 'serious'" in message
     assert "[serious] Elements must meet minimum color contrast ratio thresholds (WCAG 1.4.3): 3 page(s): /, /a, /b" in message
     assert "probably one fix in a shared header, footer or style" in message
+
+
+# An app that shows nothing at first and builds the page 3 s later without any network request (so the network
+# is quiet the whole time), and a page that never gets past "Loading...".
+LATE = {
+    "/": _page("Home", '<div id="root"></div><script>setTimeout(() => { document.getElementById("root").innerHTML ='
+                       ' \'<h1>Dashboard</h1><a href="/deposits">Deposits</a> <a href="/stuck">Stuck</a>\'; }, 3000)'
+                       "</script>"),
+    "/deposits": _page("Deposits", '<div id="root"><div role="progressbar" aria-label="Loading">…</div></div>'
+                                   '<script>setTimeout(() => { document.getElementById("root").innerHTML ='
+                                   ' "<h1>Deposits</h1><p>3 deposits</p>"; }, 2000)</script>'),
+    "/stuck": _page("Stuck", "<p>Loading…</p>"),
+}
+
+
+def test_pages_are_measured_once_their_content_is_there(tmp_path: Path) -> None:
+    """A blank or loading screen is not measured as the page: the audit waits for real content (and its links),
+    and a page that never shows any is reported as still loading, not as 'no heading'."""
+    for url in _serve(LATE):
+        cfg = base_config(url, timeout_ms=10000, artifacts={"video": "off"}, accessibility={"fail_on": "none"},
+                          audit={"max_pages": 10, "check_external_links": False, "content_wait_ms": 6000})
+        run = invoke_cli(tmp_path, ["site_audit", "-k", "crawl or title"], config=cfg)
+    pages = sorted(s.split(". ", 1)[-1] for s in run.test("test_crawl_found_the_site")["steps"])
+    assert pages == ["/", "/deposits", "/stuck"], pages  # the links only exist once the page is built
+    t = run.test("test_every_page_loads_with_a_title_and_heading")
+    text = t["message"] + t["details"]
+    assert "1 page problem(s)" in text, text
+    assert "/stuck: still blank or loading after 6 s" in text
+    assert "no main heading" not in t["message"]  # / and /deposits were measured once built

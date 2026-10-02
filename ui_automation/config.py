@@ -82,6 +82,8 @@ class AuditSettings:
     # HTTPS and security headers: "auto" checks public sites and skips local ones (localhost, 192.168.x, ...),
     # where development servers rarely have them; "on" / "off" force it.
     security_checks: str = "auto"
+    # Pages built in the browser (React, Vue, ...) are measured only once they show content: up to this long.
+    content_wait_ms: int = 15000
 
 
 @dataclass(frozen=True)
@@ -361,6 +363,7 @@ def _load_audit(raw: Mapping[str, Any] | None) -> AuditSettings:
         load_budget_ms=_as_int(raw.get("load_budget_ms"), 5000, "audit.load_budget_ms", minimum=100),
         check_external_links=_as_bool(raw.get("check_external_links"), True, "audit.check_external_links"),
         security_checks=_auto_on_off(raw.get("security_checks"), "audit.security_checks"),
+        content_wait_ms=_as_int(raw.get("content_wait_ms"), 15000, "audit.content_wait_ms", minimum=0),
     )
 
 
