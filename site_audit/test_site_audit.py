@@ -147,6 +147,23 @@ def test_pages_fit_every_screen_size(audit: SiteMap, settings, request: pytest.F
     report(problems, "page(s) that need sideways scrolling")
 
 
+def test_works_on_mobile_devices(audit: SiteMap, settings, playwright, run_dir, request: pytest.FixtureRequest) -> None:
+    """Every page on real phone profiles (audit.mobile_devices: iPhone, Android): set up for phones, no sideways
+    scrolling, readable text, buttons big enough to tap, and no errors. Devices take turns by day like browsers."""
+    from site_audit.conftest import check_on_device
+    from ui_automation.browsers import browsers_for_run
+
+    devices = browsers_for_run(list(settings.audit.mobile_devices), settings.browser_rotation)
+    print(f"Checked on: {', '.join(devices)}")
+    problems: list[str] = []
+    for device in devices:
+        found, gallery = check_on_device(playwright, settings, audit, device,
+                                         run_dir / "screenshots" / f"mobile-{audit.role}")
+        problems += found
+        request.node.step_screenshots.extend(gallery)
+    report(problems, "mobile problem(s)")
+
+
 def test_pages_load_quickly(audit: SiteMap, settings, request: pytest.FixtureRequest) -> None:
     budget = settings.audit.load_budget_ms
     timed = [r for r in loaded(audit) if r.ready_ms is not None]

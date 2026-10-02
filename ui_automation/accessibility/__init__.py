@@ -105,6 +105,15 @@ def scan(page: Any, standard: str = "wcag21aa") -> list[Violation]:
     return violations
 
 
+def scan_rules(page: Any, rules: list[str]) -> list[Violation]:
+    """Run only these axe rules (e.g. ["target-size"] on a phone), whatever standard they belong to."""
+    if not page.evaluate("() => typeof window.axe !== 'undefined'"):
+        page.evaluate(axe_source() + "\n;void 0")
+    result = page.evaluate(
+        "rules => axe.run(document, {runOnly: {type: 'rule', values: rules}, resultTypes: ['violations']})", rules)
+    return [Violation.from_axe(v) for v in result.get("violations", [])]
+
+
 def at_or_above(violations: list[Violation], threshold: str) -> list[Violation]:
     level = IMPACTS.index(threshold)
     return [v for v in violations if v.impact in IMPACTS and IMPACTS.index(v.impact) >= level]

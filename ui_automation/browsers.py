@@ -55,10 +55,23 @@ def irish_today() -> date:
 
 
 def browsers_for_run(browsers: tuple[str, ...] | list[str], rotation: str, today: date | None = None) -> list[str]:
-    """The browsers this run uses. With browser_rotation: daily, one of them, taking turns by the day,
-    unless WEB_UI_ALL_BROWSERS=1 (the --all-browsers option) asks for all of them."""
+    """The browsers (or mobile devices) this run uses. With browser_rotation: daily, one of them, taking turns
+    by the day, unless WEB_UI_ALL_BROWSERS=1 (the --all-browsers option) asks for all of them."""
     names = list(browsers)
     if rotation != "daily" or len(names) < 2 or os.environ.get("WEB_UI_ALL_BROWSERS") == "1":
         return names
     day = today or irish_today()
     return [names[day.toordinal() % len(names)]]
+
+
+def device_engines(devices: list[str]) -> list[str]:
+    """The browser each mobile device runs in (iPhone: webkit, Pixel: chromium), for installing them first."""
+    from playwright.sync_api import Error as PlaywrightError, sync_playwright
+
+    if not devices:
+        return []
+    try:
+        with sync_playwright() as p:
+            return list(dict.fromkeys(p.devices[d]["default_browser_type"] for d in devices if d in p.devices))
+    except PlaywrightError:
+        return []

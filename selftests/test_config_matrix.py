@@ -296,3 +296,16 @@ def test_browsers_take_turns_by_day(monkeypatch: pytest.MonkeyPatch) -> None:
     assert browsers_for_run(("webkit",), "daily", monday) == ["webkit"]
     monkeypatch.setenv("WEB_UI_ALL_BROWSERS", "1")  # --all-browsers
     assert browsers_for_run(names, "daily", monday) == list(names)
+
+
+def test_site_wide_checks_run_in_todays_browser(tmp_path: Path) -> None:
+    """With browsers taking turns, the once-per-site checks run in whichever browser today's run uses."""
+    from site_audit.conftest import _not_applicable
+
+    s = load(tmp_path, BASE + "audit:\n  security_checks: on\n")
+    for today in ("chromium", "firefox", "webkit"):
+        for check in ("test_no_broken_links", "test_served_securely", "test_works_on_mobile_devices"):
+            assert _not_applicable(check, "public", s, today, today) == "-", (check, today)
+    # with --all-browsers: once, in the first browser of the run
+    assert _not_applicable("test_no_broken_links", "public", s, "firefox", "chromium") == ""
+    assert _not_applicable("test_pages_are_accessible", "public", s, "firefox", "chromium") == "-"

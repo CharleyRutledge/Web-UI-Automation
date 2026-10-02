@@ -61,6 +61,10 @@ home page first, up to `audit.max_pages`. Every page found is then checked for:
 - broken links (internal, plus up to 60 external) and broken images
 - sideways scrolling at every screen size in `audit.screens` (by default a 320 px small phone for WCAG
   1.4.10, a phone, a tablet, a laptop and a desktop), with a screenshot at each size that breaks
+- real phones (`audit.mobile_devices`, by default an iPhone 15 in Safari's engine and a Pixel 7 in Chrome):
+  each page opened with the phone's screen, touch and mobile browser, as each role, and checked for a
+  viewport tag, sideways scrolling, text under 12px, buttons too small to tap (axe's WCAG 2.5.8 rule) and
+  errors; the phones take turns by day like the browsers
 - load time against `audit.load_budget_ms`
 - HTTPS and security headers
 - a WCAG scan, with a copyable fix for each issue
