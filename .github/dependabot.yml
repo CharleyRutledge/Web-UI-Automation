@@ -1,0 +1,25 @@
+# Keeps every package up to date: once a week GitHub checks the Python packages (requirements*.txt) and the
+# GitHub Actions used by the workflows, and opens ONE pull request with all available updates together.
+# Nothing is merged automatically: the self-tests run on that pull request, and it is merged by hand.
+version: 2
+
+multi-ecosystem-groups:
+  all-updates:
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Dublin
+
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    patterns: ["*"]
+    multi-ecosystem-group: all-updates
+    open-pull-requests-limit: 1
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    patterns: ["*"]
+    multi-ecosystem-group: all-updates
+    open-pull-requests-limit: 1

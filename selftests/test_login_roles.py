@@ -83,7 +83,11 @@ class App:
                 if path == "/logout":
                     app.sessions = {k: v for k, v in app.sessions.items() if v != user}
                     return self._send(302, headers={"Location": "/"})
-                nav = ('<a href="/dashboard">Dashboard</a> <a href="/reports">Reports</a> '
+                if path == "/settings":  # signed-in, but no link leads here
+                    return self._send(200, _page("Settings", '<a href="/dashboard">Dashboard</a>'))
+                # Like many apps, the signed-in menu also links to the public site (home, about).
+                nav = ('<a href="/">Home</a> <a href="/about">About</a> '
+                       '<a href="/dashboard">Dashboard</a> <a href="/reports">Reports</a> '
                        + ('<a href="/admin">Admin</a> ' if user == "admin" else "")
                        + '<a href="/logout">Log out</a> <a href="/items/7/delete">Delete item</a>')
                 if path == "/dashboard":
@@ -174,6 +178,18 @@ def test_each_role_is_audited_behind_the_login(roles_run) -> None:
     assert scanned(run, "public") == ["/", "/about", "/login"]
     assert scanned(run, "admin") == ["/admin", "/admin/users", "/dashboard", "/reports"]
     assert scanned(run, "viewer") == ["/dashboard", "/reports"]  # no admin link for viewers
+    # (The signed-in menu links to / and /about too, but the public run checked those already.)
+
+
+def test_role_area_and_extra_pages(tmp_path: Path, app: App) -> None:
+    """area keeps a role's crawl to part of the app; pages adds pages no link leads to."""
+    cfg = roles_config(app.url, include_public=False)
+    cfg["auth"]["roles"][0].update(area="/admin", start="/admin")
+    cfg["auth"]["roles"][1].update(pages=["/settings"])
+    run = invoke_cli(tmp_path, ["site_audit", "-k", "accessible or crawl"], config=cfg, env=ENV)
+    assert set(outcomes(run).values()) == {"passed"}, run.output
+    assert scanned(run, "admin") == ["/admin", "/admin/users"]
+    assert scanned(run, "viewer") == ["/", "/about", "/dashboard", "/login", "/reports", "/settings"]
 
 
 def test_logout_and_delete_links_are_never_followed(roles_run) -> None:
@@ -184,13 +200,20 @@ def test_logout_and_delete_links_are_never_followed(roles_run) -> None:
 def test_permission_checks_pass_when_the_app_refuses(roles_run) -> None:
     run, _ = roles_run
     assert run.test("test_role_is_refused_restricted_pages[viewer-")["outcome"] == "passed"
-    assert run.test("test_role_is_refused_restricted_pages[admin-")["outcome"] == "skipped"
+    # admin has no restricted pages listed: the check is not run (never "skipped"), and the run says so.
+    assert "test_role_is_refused_restricted_pages[admin-chromium]" not in outcomes(run)
+    assert "access control is not tested for this role" in run.output
 
 
-def test_site_wide_checks_run_once(roles_run) -> None:
+def test_nothing_is_skipped_and_site_wide_checks_run_once(roles_run) -> None:
     run, _ = roles_run
-    assert run.test("test_served_securely[admin-")["outcome"] == "skipped"
-    assert "checked once for the whole site" in run.test("test_meets_website_requirements[viewer-")["message"]
+    o = outcomes(run)
+    assert "skipped" not in o.values(), o
+    assert not any(k.startswith("test_meets_website_requirements") for k in o)  # compliance is off here
+    assert "Meets website requirements: compliance.enabled is false" in run.output
+    assert not any(k.startswith("test_served_securely") for k in o)  # local app: listed under "Not run"
+    assert "Not run (does not apply to this site or its settings)" in run.output
+    assert "Served securely: a local app has no HTTPS" in run.output
 
 
 def test_permission_hole_is_reported(tmp_path: Path) -> None:

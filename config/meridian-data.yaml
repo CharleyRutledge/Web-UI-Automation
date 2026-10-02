@@ -42,6 +42,8 @@ app:
 # A role whose variables are missing is reported as "could not log in"; the other roles still run.
 # The admin role is left out until there is a test-only admin account (never a production one).
 # must_not_access: pages a role must be refused (HTTP 401/403/404 or sent to the login page).
+# pages: signed-in pages to check that no ordinary link leads to (e.g. reached through buttons).
+# Public pages are checked once, by the logged-out run; each role then spends its pages on /app.
 auth:
   login_url: /login
   username_field: "input[placeholder='you@company.eu']"

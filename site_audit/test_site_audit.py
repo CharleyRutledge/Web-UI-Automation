@@ -13,9 +13,8 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from pages.base_page import BasePage
-from site_audit.conftest import SKIP_LINKS, SiteMap, first_role, same_site, short, show
+from site_audit.conftest import SKIP_LINKS, SiteMap, same_site, short, show
 from ui_automation.compliance import Monitor, as_dicts, check_page
-from ui_automation.local import is_local
 
 # Sites that refuse automated link checks (they answer bots with these) are "unverified", not broken.
 UNVERIFIABLE = {401, 403, 405, 406, 429, 999}
@@ -34,10 +33,18 @@ def loaded(site_map: SiteMap) -> list:
 
 def test_crawl_found_the_site(audit: SiteMap, request: pytest.FixtureRequest) -> None:
     show(request, audit, audit.pages)  # every page found, as a gallery in the report
-    print(f"Found {len(audit.pages)} page(s) and {len(audit.links)} link(s)")
+    where = f" under {audit.area}" if audit.area else ""
+    print(f"Found {len(audit.pages)} page(s){where} and {len(audit.links)} link(s)")
+    if audit.skipped_public:
+        print(f"Pages the logged-out visitor already checked were not opened again ({audit.skipped_public}).")
     assert audit.pages, "the home page could not be opened"
     problems = [f"{short(u, audit.home)}: {why}" for u, why in audit.problems.items()]
-    report(problems, "page(s) could not be crawled")
+    if audit.role != "public" and len(audit.pages) == 1:
+        # Signed-in pages reached through buttons (not <a href> links) cannot be found by following links.
+        problems.append(f"only the start page {short(audit.pages[0], audit.home)} was found for role "
+                        f"'{audit.role}': it has no ordinary links to other signed-in pages, so the rest of the "
+                        f"app was not checked. List those pages in auth.roles.{audit.role}.pages")
+    report(problems, "crawl problem(s)")
 
 
 def test_every_page_loads_with_a_title_and_heading(audit: SiteMap, request: pytest.FixtureRequest) -> None:
@@ -71,6 +78,13 @@ def test_no_javascript_errors(audit: SiteMap, request: pytest.FixtureRequest) ->
     report(problems, "uncaught JavaScript error(s)")
 
 
+def test_no_network_errors(audit: SiteMap, request: pytest.FixtureRequest) -> None:
+    """Every request a page makes (scripts, styles, images, fonts, API calls) must get an answer below HTTP 400."""
+    problems = [f"{short(r.url, audit.home)}: {err}" for r in loaded(audit) for err in r.network_errors]
+    show(request, audit, [r.url for r in loaded(audit) if r.network_errors])
+    report(problems, "failed network request(s)")
+
+
 def test_no_broken_links(site: BasePage, site_map: SiteMap) -> None:
     home = site_map.home
     # Logout / delete links are never requested: they could end the role's session or change data.
@@ -99,8 +113,6 @@ def test_no_broken_links(site: BasePage, site_map: SiteMap) -> None:
 
 def test_role_is_refused_restricted_pages(audit: SiteMap) -> None:
     """auth.roles.<role>.must_not_access: these pages must refuse this role (HTTP 401/403/404 or the login page)."""
-    if not audit.refused:
-        pytest.skip(f"no restricted pages listed for role '{audit.role}' (auth.roles.<role>.must_not_access)")
     opened = [f"{path}: {what}" for path, what in audit.refused.items() if what]
     print("\n".join(f"{path}: refused" for path, what in audit.refused.items() if not what))
     report(opened, f"page(s) that role '{audit.role}' should not be able to open")
@@ -132,13 +144,7 @@ def test_pages_load_quickly(audit: SiteMap, settings, request: pytest.FixtureReq
 
 
 def test_served_securely(site: BasePage, site_map: SiteMap, role: str) -> None:
-    if not first_role(site.settings, role):
-        pytest.skip("checked once for the whole site (not again for every role)")
-    home = site_map.home
-    mode = site.settings.audit.security_checks
-    if mode == "off" or (mode == "auto" and is_local(home)):
-        pytest.skip("local app: HTTPS and security headers are checked on the deployed site "
-                    "(audit.security_checks: on checks them here too)")
+    home = site_map.home  # (left out of runs it does not apply to: see conftest._not_applicable)
     problems: list[str] = []
     host = urlparse(home).hostname
     site.step("Check HTTPS and security headers")
@@ -170,8 +176,6 @@ def test_pages_are_accessible(audit: SiteMap, settings, request: pytest.FixtureR
     from ui_automation.accessibility import at_or_above
 
     cfg = settings.accessibility
-    if not cfg.enabled:
-        pytest.skip("accessibility checks are off (accessibility.enabled: false)")
     pages = loaded(audit)
     request.node.accessibility = [
         {"url": r.url, "standard": cfg.standard, "violations": [v.__dict__ for v in r.accessibility]} for r in pages
@@ -198,10 +202,6 @@ def test_pages_are_accessible(audit: SiteMap, settings, request: pytest.FixtureR
 
 def test_meets_website_requirements(site: BasePage, site_map: SiteMap, request, role: str) -> None:
     """Irish / EU website requirements on the home page, checked before any cookie consent is given."""
-    if not first_role(site.settings, role):
-        pytest.skip("checked once for the whole site (not again for every role)")
-    if not site.settings.compliance.enabled:
-        pytest.skip("website requirement checks are off (compliance.enabled: false)")
     monitor = Monitor(site.page)  # before navigation: nothing may track before consent
     site.goto_path(site_map.home)
     site.page.wait_for_load_state("load")

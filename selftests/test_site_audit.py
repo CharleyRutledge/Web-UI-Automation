@@ -24,7 +24,7 @@ FLAWED = {
                        '<a href="/js-error">JS</a> <a href="/gone">Gone</a> <a href="/report.pdf">Report</a> '
                        '<a href="/about#team">Team</a> <a href="/about?utm=x">About again</a></nav>'),
     "/about": _page("About", '<h1>About</h1><img src="/missing.png" alt="Missing"><a href="/">Home</a>'),
-    "/data": _page("Data", "<p>No heading here</p>"),
+    "/data": _page("Data", '<p>No heading here</p><script>fetch("/api/data?token=s3cret")</script>'),  # API 404
     "/wide": _page("Wide", '<h1>Wide</h1><div class="table-wrap" style="width:1200px">wide</div>'),
     "/js-error": _page("JS", "<h1>JS</h1><script>undefinedFunction()</script>"),
     "/report.pdf": "%PDF-1.4",
@@ -99,6 +99,8 @@ def test_crawl_follows_links_once_and_skips_files(flawed: CliRun) -> None:
         ("test_no_javascript_errors", ["/js-error: undefinedFunction is not defined"]),
         ("test_no_broken_links", ["/gone (linked from /): HTTP 404"]),
         ("test_no_broken_images", ["/about: http://127.0.0.1:"]),
+        ("test_no_network_errors", ["2 failed network request(s)", "/about: GET /missing.png -> HTTP 404",
+                                    "/data: GET /api/data -> HTTP 404"]),
         ("test_pages_work_on_a_phone", ["/wide: page is 1208px wide on a 375px phone (widest element: div.table-wrap)"]),
         ("test_served_securely", ["the site is not served over HTTPS"]),
         ("test_meets_website_requirements", ["Privacy notice: No link to a privacy notice", "(GDPR Art. 13/14",
@@ -111,6 +113,11 @@ def test_each_planted_problem_is_found(flawed: CliRun, test: str, expected: list
     text = t["message"] + t["details"]
     for item in expected:
         assert item in text, (item, text)
+
+
+def test_network_errors_never_show_query_strings(flawed: CliRun) -> None:
+    t = flawed.test("test_no_network_errors")
+    assert "s3cret" not in t["message"] + t["details"]  # query strings can carry tokens
 
 
 def test_problems_are_counted_exactly(flawed: CliRun) -> None:

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ui_automation.config import load_settings, reports_root
+from ui_automation.terminal import link
 
 
 def _project_root() -> Path:
@@ -299,9 +300,9 @@ def main(argv: list[str] | None = None) -> int:
         cmd.append(f"--config={args.config}")
     cmd.extend(pytest_args)
 
-    print(f"Report directory: {run_dir}")
-    print(f"HTML report: {html_report}")
-    print(f"Playwright output: {playwright_output}")
+    print(f"Report directory: {link(run_dir)}")
+    print(f"HTML report: {link(html_report)}")
+    print(f"Playwright output: {link(playwright_output)}")
     print(f"Video mode: {settings.video_mode}")
 
     server: AppServer | None = None
@@ -342,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
     notify_run(run_dir, settings)
 
     latest_report = publish_latest_report(run_dir, reports_dir)
-    print(f"Latest report copy: {latest_report}")
+    print(f"Latest report copy: {link(latest_report)}")
 
     # The clear one-page summary (the same one Telegram/email get); the full pytest report as a fallback.
     summary_page = latest_report.with_name("summary.html")

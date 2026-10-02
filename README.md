@@ -56,6 +56,8 @@ home page first, up to `audit.max_pages`. Every page found is then checked for:
 
 - loading, with a title and a main heading
 - uncaught JavaScript errors
+- network errors: every request the page makes (scripts, styles, images, fonts, API calls) that fails or
+  gets HTTP 400 or above
 - broken links (internal, plus up to 60 external) and broken images
 - sideways scrolling on a 375 px phone (WCAG 1.4.10)
 - load time against `audit.load_budget_ms`
@@ -65,6 +67,10 @@ home page first, up to `audit.max_pages`. Every page found is then checked for:
 
 Each page is opened once and all of this is measured on that visit, so a 25-page audit stays quick.
 Each check lists every problem it finds, not just the first.
+
+**Nothing is skipped.** A check that does not apply to the run (HTTPS on a local app, a site-wide check
+again for each role, permission checks for a role with no restricted pages listed) is not run at all, and
+the end of the run lists each one with the reason, so you can see exactly what was not covered.
 
 ```bash
 python -m ui_automation --config config/site-audit.yaml --url https://example.ie -- site_audit
@@ -98,7 +104,13 @@ auth:
       username: "${APP_VIEWER_USER}"
       password: "${APP_VIEWER_PASSWORD}"
       must_not_access: [/admin]   # checked: this role must be refused these pages
+      pages: [/settings]          # optional: pages no link leads to, checked as well
+      # area: /app                # optional: keep this role's crawl to pages under /app
 ```
+
+- **Each role checks its own pages.** Pages the logged-out visitor already checked (and could really open)
+  are not opened again by the roles, so each role's page budget (`audit.max_pages`) goes to the signed-in
+  part of the app. The report lists every page each role checked.
 
 - **Credentials** come from environment variables or the git-ignored `.env`, never from the settings file.
   A missing one is named in the error.
@@ -143,6 +155,13 @@ python -m ui_automation --config config/meridian-data.yaml --start "npm run dev"
   checks are left for the deployed site (`audit.security_checks: on` runs them locally too).
 - For Telegram reports from your computer, copy `.env.example` to `.env` and fill in your keys. `.env`
   is git-ignored and never leaves your computer; GitHub runs use the repository secrets.
+
+## Package updates
+
+`.github/dependabot.yml` keeps every package up to date: each Monday GitHub checks the Python packages and
+the GitHub Actions, and opens **one** pull request with all available updates. The self-tests run on it;
+it is merged by hand like any other change. On your computer, `git pull` and then
+`python -m pip install -U -r requirements.txt` brings the new versions in.
 
 ## Testing the framework itself
 
