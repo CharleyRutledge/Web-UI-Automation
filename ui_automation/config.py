@@ -106,6 +106,9 @@ class AuditSettings:
     # Real phones (Playwright's device list): their screen, touch, pixel density and mobile browser.
     # They take turns by day like the browsers (browser_rotation); [] turns the mobile check off.
     mobile_devices: tuple[str, ...] = ("iPhone 15", "Pixel 7")
+    api_budget_ms: int = 2000  # an API call slower than this is reported
+    # API paths meant to answer without logging in (e.g. /api/config): not reported when they do.
+    public_api: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -391,6 +394,8 @@ def _load_audit(raw: Mapping[str, Any] | None) -> AuditSettings:
         content_wait_ms=_as_int(raw.get("content_wait_ms"), 15000, "audit.content_wait_ms", minimum=0),
         screens=_load_screens(raw.get("screens")),
         mobile_devices=_load_devices(raw.get("mobile_devices")),
+        api_budget_ms=_as_int(raw.get("api_budget_ms"), 2000, "audit.api_budget_ms", minimum=1),
+        public_api=_pages(raw.get("public_api"), "audit.public_api") if raw.get("public_api") else (),
     )
 
 
