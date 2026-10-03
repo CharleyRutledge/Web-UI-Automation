@@ -65,6 +65,11 @@ home page first, up to `audit.max_pages`. Every page found is then checked for:
   each page opened with the phone's screen, touch and mobile browser, as each role, and checked for a
   viewport tag, sideways scrolling, text under 12px, buttons too small to tap (axe's WCAG 2.5.8 rule) and
   errors; the phones take turns by day like the browsers
+- the app's API: every API call the pages make (fetch / XHR) must answer without an error and within
+  `audit.api_budget_ms`; each logged-in role's read requests are sent again with no login and as every
+  other role, so data handed out without logging in, or to the wrong role, is reported. Only GET requests
+  are replayed (nothing that changes data), and tokens never reach a report. Endpoints meant to be
+  public go in `audit.public_api`
 - load time against `audit.load_budget_ms`
 - HTTPS and security headers
 - a WCAG scan, with a copyable fix for each issue

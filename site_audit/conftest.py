@@ -10,7 +10,9 @@ Point it at any site: python -m ui_automation --config config/<site>.yaml -- sit
 
 from __future__ import annotations
 
+import hashlib
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urldefrag, urlparse
@@ -119,6 +121,19 @@ class PageResult:
 
 
 @dataclass
+class ApiCall:
+    """One API call (fetch / XHR) a page made while crawling. Kept in memory only: `auth` is the request's
+    Authorization header (to replay it as this role) and is never written to a report or a file."""
+    method: str
+    url: str = field(repr=False)  # full address (the query is needed to replay it; reports show only the path)
+    status: int
+    ms: int
+    page: str  # the page that made it
+    body_hash: str = ""  # fingerprint of a successful response, to compare replays (the data itself is not kept)
+    auth: str = field(default="", repr=False)
+
+
+@dataclass
 class SiteMap:
     home: str
     pages: list[str] = field(default_factory=list)  # same-site pages, home first
@@ -127,11 +142,14 @@ class SiteMap:
     problems: dict[str, str] = field(default_factory=dict)  # page -> what went wrong while crawling
     results: dict[str, PageResult] = field(default_factory=dict)  # page -> what was measured on it
     role: str = "public"
-    state: dict | None = None  # the role's logged-in session (cookies, local storage)
+    # The role's logged-in session (cookies, local storage). Never shown: pytest prints a failing test's
+    # arguments, and this would put session cookies into the report.
+    state: dict | None = field(default=None, repr=False)
     login_error: str = ""  # set when logging in as the role failed
     refused: dict[str, str] = field(default_factory=dict)  # must_not_access page -> what happened ("" = refused)
     area: str = ""  # the part of the site this role's crawl stayed in ("" = everywhere)
     skipped_public: int = 0  # pages left out because the logged-out visitor already checked them
+    api: list[ApiCall] = field(default_factory=list, repr=False)  # every distinct API call (addresses can hold tokens)
 
 
 def same_site(url: str, home: str) -> bool:
@@ -227,6 +245,36 @@ def crawl(browser: Browser, home: str, max_pages: int, wait_until: str, *, self_
 
     page.on("response", on_response)
     page.on("requestfailed", on_failed)
+
+    # API calls: method, address, status, time and a fingerprint of the answer (for the API checks).
+    started: dict[int, float] = {}
+    seen_calls: set[tuple[str, str]] = set()
+
+    def on_request(request) -> None:  # noqa: ANN001 - Playwright Request
+        if request.resource_type in ("fetch", "xhr"):
+            started[id(request)] = time.monotonic()
+
+    def on_finished(request) -> None:  # noqa: ANN001 - Playwright Request
+        begun = started.pop(id(request), None)
+        key = (request.method, request.url)
+        if begun is None or key in seen_calls or len(site.api) >= 200:
+            return
+        seen_calls.add(key)
+        try:
+            response = request.response()
+            if response is None:
+                return
+            body_hash = ""
+            if response.ok and request.method == "GET":
+                body_hash = hashlib.sha256(response.body()).hexdigest()
+            auth = request.all_headers().get("authorization", "")
+        except PlaywrightError:
+            return
+        site.api.append(ApiCall(request.method, request.url, response.status,
+                                int((time.monotonic() - begun) * 1000), page.url, body_hash, auth))
+
+    page.on("request", on_request)
+    page.on("requestfinished", on_finished)
     def in_area(url: str) -> bool:
         path = urlparse(url).path
         return not area or path == area or path.startswith(area.rstrip("/") + "/")
@@ -309,7 +357,8 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 # the first browser only; everything measured on the page itself runs in every browser.
 # The phones use their own browsers, so the mobile check also runs once per run.
 _ONCE_PER_SITE = ("test_no_broken_links", "test_served_securely", "test_meets_website_requirements",
-                  "test_works_on_mobile_devices")
+                  "test_works_on_mobile_devices", "test_api_calls_work_and_are_fast",
+                  "test_api_refuses_logged_out_requests", "test_api_keeps_roles_apart")
 
 
 def _not_applicable(name: str, role: str, settings: Settings, browser: str = "", first_browser: str = "") -> str:
@@ -319,6 +368,10 @@ def _not_applicable(name: str, role: str, settings: Settings, browser: str = "",
 
     if name in _ONCE_PER_SITE and browser and first_browser and browser != first_browser:
         return ""  # silently: checked once, in the run's first browser
+    if name in ("test_api_refuses_logged_out_requests", "test_api_keeps_roles_apart") and role == "public":
+        return ""  # silently: these check what a logged-in role's API calls give away
+    if name == "test_api_keeps_roles_apart" and len(settings.auth.roles) < 2:
+        return "API keeps roles apart: needs at least two roles in auth.roles"
     if name == "test_works_on_mobile_devices" and not settings.audit.mobile_devices:
         return "Works on mobile devices: audit.mobile_devices is empty"
     if name in ("test_served_securely", "test_meets_website_requirements") and not first_role(settings, role):

@@ -32,7 +32,8 @@ def _page(title: str, body: str) -> str:
 class App:
     """A small app with sessions and two roles."""
 
-    def __init__(self, *, reports_allowed_for_viewer: bool = True) -> None:
+    def __init__(self, *, reports_allowed_for_viewer: bool = True, api_open_without_login: bool = False,
+                 admin_api_open_to_all: bool = False) -> None:
         self.sessions: dict[str, str] = {}
         self.requests: list[str] = []
         app = self
@@ -48,6 +49,32 @@ class App:
                         return app.sessions.get(v)
                 return None
 
+            def _token_user(self) -> str | None:  # Authorization: Bearer <sid>, as single-page apps send it
+                auth = self.headers.get("Authorization") or ""
+                return app.sessions.get(auth.removeprefix("Bearer ").strip()) if auth.startswith("Bearer ") else None
+
+            def _json(self, code: int, data: str) -> None:
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(data.encode())
+
+            def _api(self, path: str, user: str | None) -> None:
+                if path == "/api/reports":  # the same list for every role that can see reports
+                    if user is None and not app.api_open_without_login:
+                        return self._json(401, '{"error": "log in"}')
+                    return self._json(200, '{"reports": ["Q1", "Q2"]}')
+                if path == "/api/me":  # different for each user
+                    return self._json(401, "{}") if user is None else self._json(200, f'{{"user": "{user}"}}')
+                if path == "/api/token-data":  # only with the token
+                    who = self._token_user()
+                    return self._json(401, "{}") if who is None else self._json(200, f'{{"secret-of": "{who}"}}')
+                if path == "/api/admin/users":
+                    if user != "admin" and not (user and app.admin_api_open_to_all):
+                        return self._json(403, '{"error": "admins only"}')
+                    return self._json(200, '{"users": ["admin", "viewer"]}')
+                return self._json(404, "{}")
+
             def _send(self, code: int, html: str = "", headers: dict | None = None) -> None:
                 self.send_response(code)
                 self.send_header("Content-Type", "text/html")
@@ -60,6 +87,8 @@ class App:
                 path = self.path.split("?")[0]
                 app.requests.append(path)
                 user = self._user()
+                if path.startswith("/api/"):
+                    return self._api(path, user)
                 if path == "/":
                     return self._send(200, _page("Home", '<a href="/login">Log in</a> <a href="/about">About</a>'))
                 if path == "/about":
@@ -93,16 +122,20 @@ class App:
                        '<a href="/dashboard">Dashboard</a> <a href="/reports">Reports</a> '
                        + ('<a href="/admin">Admin</a> ' if user == "admin" else "")
                        + '<a href="/logout">Log out</a> <a href="/items/7/delete">Delete item</a>')
+                fetch = ("<script>var sid=(document.cookie.match(/sid=(\\w+)/)||[])[1];"
+                         "fetch('/api/me');fetch('/api/token-data',{headers:{Authorization:'Bearer '+sid}});"
+                         "</script>")
                 if path == "/dashboard":
-                    return self._send(200, _page(f"Dashboard for {user}", nav))
+                    return self._send(200, _page(f"Dashboard for {user}", nav + fetch))
                 if path == "/reports":
                     if user == "viewer" and not app.reports_allowed_for_viewer:
                         return self._send(403, _page("Forbidden", ""))
-                    return self._send(200, _page("Reports", nav))
+                    return self._send(200, _page("Reports", nav + "<script>fetch('/api/reports')</script>"))
                 if path == "/admin":
                     if user != "admin":
                         return self._send(403, _page("Forbidden", ""))
-                    return self._send(200, _page("Admin", nav + ' <a href="/admin/users">Users</a>'))
+                    return self._send(200, _page("Admin", nav + ' <a href="/admin/users">Users</a>'
+                                                 "<script>fetch('/api/admin/users')</script>"))
                 if path == "/admin/users":
                     return self._send(200 if user == "admin" else 403, _page("Users", nav))
                 return self._send(404, _page("Not found", ""))
@@ -127,6 +160,8 @@ class App:
                                   '<input type="password" name="password"><button>Log in</button></form>'))
 
         self.reports_allowed_for_viewer = reports_allowed_for_viewer
+        self.api_open_without_login = api_open_without_login
+        self.admin_api_open_to_all = admin_api_open_to_all
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.server.server_port}"
@@ -321,3 +356,36 @@ def test_role_settings_rejected(tmp_path: Path, roles, message: str) -> None:
     cfg.write_text(yaml.safe_dump({"base_url": "http://localhost:1", "auth": {"roles": roles}}))
     with pytest.raises(ValueError, match=message):
         load_settings(cfg)
+
+
+def test_api_checks_pass_on_a_well_protected_api(roles_run) -> None:
+    run, app = roles_run
+    o = outcomes(run)
+    for check in ("test_api_calls_work_and_are_fast[admin-chromium]", "test_api_calls_work_and_are_fast[viewer-chromium]",
+                  "test_api_refuses_logged_out_requests[admin-chromium]",
+                  "test_api_refuses_logged_out_requests[viewer-chromium]",
+                  "test_api_keeps_roles_apart[admin-chromium]", "test_api_keeps_roles_apart[viewer-chromium]"):
+        assert o[check] == "passed", (check, run.output)
+    assert "test_api_refuses_logged_out_requests[public-chromium]" not in o  # the logged-out visitor: nothing to check
+    assert not any(r.startswith(("POST", "PUT", "DELETE", "PATCH")) for r in app.requests if "/api/" in r)  # GET only
+
+
+def test_api_holes_are_found(tmp_path: Path) -> None:
+    """An API that answers without logging in, and an admin API that does not check the role."""
+    app = App(api_open_without_login=True, admin_api_open_to_all=True)
+    try:
+        run = invoke_cli(tmp_path, ["site_audit", "-k", "api"], config=roles_config(app.url), env=ENV)
+    finally:
+        app.server.shutdown()
+
+    def text(name: str) -> str:
+        t = run.test(name)
+        assert t["outcome"] == "failed", (name, t["outcome"], run.output)
+        return t["message"] + t["details"]
+
+    assert "GET /api/reports: answers without logging in, with the same data role 'viewer' gets" in \
+        text("test_api_refuses_logged_out_requests[viewer-")
+    assert "role 'viewer' can read role 'admin''s GET /api/admin/users" in text("test_api_keeps_roles_apart[admin-")
+    assert run.test("test_api_keeps_roles_apart[viewer-")["outcome"] == "passed"  # the admin may read the viewer's data
+    leaked = run.output + (run.run_dir / "summary.json").read_text() + (run.run_dir / "summary.html").read_text()
+    assert "Bearer " not in leaked and not any(sid in leaked for sid in app.sessions)  # tokens never reach a report

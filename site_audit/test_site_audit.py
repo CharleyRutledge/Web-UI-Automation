@@ -164,6 +164,71 @@ def test_works_on_mobile_devices(audit: SiteMap, settings, playwright, run_dir, 
     report(problems, "mobile problem(s)")
 
 
+def test_api_calls_work_and_are_fast(audit: SiteMap, settings) -> None:
+    """Every API call the pages made (fetch / XHR) answered below HTTP 400, within audit.api_budget_ms."""
+    from site_audit.api import where
+
+    budget = settings.audit.api_budget_ms
+    calls = audit.api
+    print(f"{len(calls)} API call(s) seen" + (":\n" + "\n".join(
+        f"{c.method} {where(c, audit.home)} -> HTTP {c.status} in {c.ms} ms" for c in calls[:60]) if calls else ""))
+    problems = [f"{c.method} {where(c, audit.home)} -> HTTP {c.status} (on {short(c.page, audit.home)})"
+                for c in calls if c.status >= 400]
+    problems += [f"{c.method} {where(c, audit.home)} took {c.ms} ms (budget {budget} ms, on {short(c.page, audit.home)})"
+                 for c in calls if c.status < 400 and c.ms > budget]
+    report(problems, "API problem(s)")
+
+
+def test_api_refuses_logged_out_requests(audit: SiteMap, settings, playwright, browser, run_dir) -> None:
+    """Every read request this role's pages made is sent again with no login (no cookies, no token). Handing
+    back the same data is a security hole. Endpoints the logged-out visitor uses, or audit.public_api, are fine."""
+    from site_audit.api import is_public, replay, replayable, where
+    from site_audit.conftest import _map_for
+
+    public = _map_for(browser, settings, run_dir, "public") if settings.auth.include_public else None
+    problems, refused, notes = [], [], []
+    for call in replayable(audit):
+        if is_public(call, settings, public):
+            continue
+        r = replay(playwright, settings, call, as_site=None)
+        label = f"GET {where(call, audit.home)}"
+        if r.same_data:
+            problems.append(f"{label}: answers without logging in, with the same data role '{audit.role}' gets "
+                            f"(HTTP {r.status}; if it is meant to be public, list it in audit.public_api)")
+        elif 200 <= r.status < 300:
+            notes.append(f"{label}: HTTP {r.status} without logging in, but with different data")
+        else:
+            refused.append(f"{label}: refused (HTTP {r.status}{', ' + r.error if r.error else ''})")
+    print("\n".join(refused + notes) or "No private read requests to check.")
+    report(problems, f"API request(s) that work without logging in (role '{audit.role}')")
+
+
+def test_api_keeps_roles_apart(audit: SiteMap, settings, playwright, browser, run_dir) -> None:
+    """This role's read requests are sent again as every other role. Another role getting the same data for
+    a request its own pages never make points to a leak between roles (e.g. a beneficiary reading deposits)."""
+    from site_audit.api import is_public, path, replay, replayable, where
+    from site_audit.conftest import _map_for
+
+    public = _map_for(browser, settings, run_dir, "public") if settings.auth.include_public else None
+    problems, checked = [], 0
+    for other in (r.name for r in settings.auth.roles if r.name != audit.role):
+        theirs = _map_for(browser, settings, run_dir, other)
+        if theirs.login_error:
+            problems.append(f"role '{other}' could not log in, so it was not checked against '{audit.role}'")
+            continue
+        their_paths = {path(c.url) for c in theirs.api}
+        for call in replayable(audit):
+            if is_public(call, settings, public) or path(call.url) in their_paths:
+                continue  # public, or something the other role's own pages use too
+            checked += 1
+            r = replay(playwright, settings, call, as_site=theirs)
+            if r.same_data:
+                problems.append(f"role '{other}' can read role '{audit.role}''s GET {where(call, audit.home)} "
+                                f"(the same data, HTTP {r.status}; '{other}''s own pages never ask for it)")
+    print(f"{checked} request(s) of role '{audit.role}' replayed as the other role(s)")
+    report(problems, "possible leak(s) between roles")
+
+
 def test_pages_load_quickly(audit: SiteMap, settings, request: pytest.FixtureRequest) -> None:
     budget = settings.audit.load_budget_ms
     timed = [r for r in loaded(audit) if r.ready_ms is not None]
