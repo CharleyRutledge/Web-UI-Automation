@@ -28,15 +28,25 @@ STANDARDS: dict[str, list[str]] = {
 }
 IMPACTS = ("minor", "moderate", "serious", "critical")
 
+# Checked automatically by the site audit, beyond axe's rules (ui_automation/accessibility/beyond_axe.py).
+AUTOMATED_CHECKS = (
+    ("2.1.1 / 2.1.2", "Keyboard: everything clickable can be reached with Tab, and focus never gets stuck."),
+    ("2.4.7", "Focus is visible: each element reached with Tab changes how it looks."),
+    ("1.1.1", "Alt text is not empty talk such as \"image\" or a file name."),
+    ("1.2.2", "Videos have a captions or subtitles track."),
+    ("1.3.1", "Heading levels do not skip (h2 then h4)."),
+    ("1.4.10 / 1.4.12", "Pages reflow at 320 px, and no text is cut off with increased text spacing."),
+    ("2.2.1 / 2.2.2", "No automatic page refresh, and endless animation has a pause button."),
+    ("2.5.8", "Buttons and links are big enough to tap on a phone."),
+)
+
 # What automated tools cannot decide (WCAG-EM step 4: these need a human evaluator).
 MANUAL_CHECKS = (
-    ("2.1.1 / 2.1.2", "Every function works with the keyboard alone, and focus never gets trapped."),
-    ("2.4.3 / 2.4.7", "Focus moves in a logical order and is always clearly visible."),
-    ("1.1.1", "Images have alt text that describes their purpose (not just that alt exists)."),
-    ("1.2.2 / 1.2.5", "Videos have accurate captions and, where needed, audio description."),
+    ("2.4.3", "Focus moves in an order that makes sense for the page."),
+    ("1.1.1", "Alt text describes what each image shows or does."),
+    ("1.2.2 / 1.2.5", "Captions are accurate, and videos have audio description where needed."),
     ("1.3.1 / 1.3.2", "Headings, lists and reading order match what the page looks like."),
-    ("1.4.10 / 1.4.12", "Content reflows at 320 px width and survives increased text spacing."),
-    ("2.2.1 / 2.2.2", "Time limits can be extended; moving content can be paused."),
+    ("2.2.1", "Time limits (e.g. a session that logs out) can be turned off or extended."),
     ("3.3.1 / 3.3.3", "Form errors are described in text, with suggestions to fix them."),
     ("4.1.3", "Status messages are announced by screen readers without moving focus."),
 )
