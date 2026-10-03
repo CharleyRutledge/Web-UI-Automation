@@ -329,7 +329,7 @@ def _accessibility_section(summary: RunSummary) -> str:
     scans = [scan for _, scan in owners]
     if not scans:
         return ""
-    from ui_automation.accessibility import AXE_VERSION, MANUAL_CHECKS
+    from ui_automation.accessibility import AUTOMATED_CHECKS, AXE_VERSION, MANUAL_CHECKS
 
     standard = _STANDARD_LABEL.get(scans[0].get("standard", ""), scans[0].get("standard", ""))
     total = sum(len(s["violations"]) for s in scans)
@@ -373,6 +373,10 @@ def _accessibility_section(summary: RunSummary) -> str:
             f'<div class="name">{escape(scan_.get("url", ""))}{_variant(owner)}</div>{body}</div>'
         )
     manual = "".join(f"<li><b>{escape(c)}</b>: {escape(text)}</li>" for c, text in MANUAL_CHECKS)
+    if any(t.file.startswith("site_audit") for t, _ in owners):  # the site audit runs the extra checks
+        automated = "".join(f"<li><b>{escape(c)}</b>: {escape(text)}</li>" for c, text in AUTOMATED_CHECKS)
+        parts.append("<details><summary>Also checked automatically (beyond axe-core)</summary>"
+                     f'<ul class="manual">{automated}</ul></details>')
     parts.append(
         "<details><summary>Still needs a person to check</summary>"
         '<p class="file">Automated rules catch many problems but cannot prove conformance. A full evaluation '

@@ -72,7 +72,11 @@ home page first, up to `audit.max_pages`. Every page found is then checked for:
   public go in `audit.public_api`
 - load time against `audit.load_budget_ms`
 - HTTPS and security headers
-- a WCAG scan, with a copyable fix for each issue
+- a WCAG scan, with a copyable fix for each issue: axe-core's rules, plus what axe cannot check alone,
+  done the way a person uses the page: Tab through it (focus never stuck, always visible, nothing
+  mouse-only), larger text spacing (no text cut off), alt text that says nothing, videos without
+  captions, automatic refresh, endless animation with no pause, and skipped heading levels. The report
+  lists what is checked automatically and what still needs a person
 - Irish/EU website requirements on the home page
 
 Pages built in the browser (React, Vue, ...) are measured only once they show real content: the audit waits

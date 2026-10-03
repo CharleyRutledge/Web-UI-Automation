@@ -270,3 +270,17 @@ def test_unknown_device_is_named(tmp_path: Path) -> None:
         run = invoke_cli(tmp_path, ["site_audit", "-k", "mobile"], config=cfg)
     t = run.test("test_works_on_mobile_devices")
     assert "Pixel 99: not a known device (did you mean: Pixel" in t["message"] + t["details"]
+
+
+def test_keyboard_and_focus_problems_reach_the_report(tmp_path: Path) -> None:
+    """The checks beyond axe run on every audited page and show in the report like axe's, with the criterion."""
+    pages = {"/": _page("Home", "<style>button:focus{outline:none}</style><h1>Home</h1><button>Save</button>")}
+    for url in _serve(pages):
+        cfg = base_config(url, artifacts={"video": "off"}, accessibility={"fail_on": "serious"},
+                          audit={"max_pages": 1, "check_external_links": False})
+        run = invoke_cli(tmp_path, ["site_audit", "-k", "accessible"], config=cfg)
+    t = run.test("test_pages_are_accessible")
+    assert t["outcome"] == "failed" and "No visible focus indicator (WCAG 2.4.7)" in t["message"] + t["details"]
+    html = (run.run_dir / "summary.html").read_text(encoding="utf-8")
+    assert "No visible focus indicator" in html and "Also checked automatically (beyond axe-core)" in html
+    assert ":focus-visible" in html  # the suggested fix

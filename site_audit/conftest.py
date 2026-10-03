@@ -207,6 +207,10 @@ def _measure(page: Page, result: PageResult, settings: Settings, shots: Path | N
                     pass
             result.overflow[screen.name] = wide
     page.set_viewport_size({"width": settings.viewport_width, "height": settings.viewport_height})
+    if settings.accessibility.enabled:  # what axe cannot check alone: keyboard, focus, text spacing, motion, ...
+        from ui_automation.accessibility.beyond_axe import check as more_checks
+
+        result.accessibility = list(result.accessibility) + more_checks(page)
     result.js_errors = list(js_errors)  # errors thrown while loading and during the checks
 
 
